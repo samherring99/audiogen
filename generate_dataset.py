@@ -42,6 +42,13 @@ def generate_audio_from_prompt(
     output = output / torch.max(torch.abs(output))
     output = torch.clamp(output, -1, 1)
 
+    expected_samples = int(duration * sample_rate)
+    if output.shape[-1] > expected_samples:
+        output = output[..., :expected_samples]
+    elif output.shape[-1] < expected_samples:
+        padding = expected_samples - output.shape[-1]
+        output = torch.nn.functional.pad(output, (0, padding))
+
     return output
 
 
