@@ -12,10 +12,12 @@ sample_size = model_config["sample_size"]
 
 model = model.to(device)
 
+duration = 10
+
 conditioning = [{
     "prompt": "a bird chirping",
-    "seconds_start": 0, 
-    "seconds_total": 30
+    "seconds_start": 0,
+    "seconds_total": duration
 }]
 
 output = generate_diffusion_cond(
@@ -30,7 +32,18 @@ output = generate_diffusion_cond(
     device=device
 )
 
+# Resizing
 output = rearrange(output, "b d n -> d (b n)")
+output = output.to(torch.float32).cpu()
+output = output / torch.max(torch.abs(output))
+output = torch.clamp(output, -1, 1)
 
-output = output.to(torch.float32).div(torch.max(torch.abs(output))).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+# Trimming
+expected_samples = int(duration * sample_rate)
+if output.shape[-1] > expected_samples:
+    output = output[..., :expected_samples]
+elif output.shape[-1] < expected_samples:
+    padding = expected_samples - output.shape[-1]
+    output = torch.nn.functional.pad(output, (0, padding))
+
 torchaudio.save("output.wav", output, sample_rate)
