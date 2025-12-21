@@ -68,33 +68,29 @@ def generate_audio_tokens(
     return generated_ids
 
 
-def parse_audio_tokens(generated_ids, tokenizer, metadata):
+def parse_audio_tokens(generated_ids, tokenizer, metadata, num_scales=3):
     generated_text = tokenizer.decode(generated_ids, skip_special_tokens=False)
     print(f"\nGenerated text preview:")
     print(generated_text[:500] + "..." if len(generated_text) > 500 else generated_text)
 
-    # scale sections: <s0>...tokens...</s0>
-    tokens_by_scale = {}
+    all_audio_pattern = r'\[AUDIO_S(\d+)_(\d+)\]'
+    all_matches = re.findall(all_audio_pattern, generated_text)
 
-    for scale in range(3):  # default to 3 scales
-        scale_pattern = rf'<s{scale}>(.*?)</s{scale}>'
-        scale_match = re.search(scale_pattern, generated_text)
-
-        if scale_match:
-            scale_content = scale_match.group(1)
-
-            token_pattern = rf'\[AUDIO_S{scale}_(\d+)\]'
-            token_matches = re.findall(token_pattern, scale_content)
-
-            if token_matches:
-                tokens_by_scale[scale] = [int(tid) for tid in token_matches]
-
-    if not tokens_by_scale:
+    if not all_matches:
         print("Warning: No audio tokens found in generation!")
         return None
 
-    print(f"\nFound {sum(len(toks) for toks in tokens_by_scale.values())} audio tokens")
-    print(f"Tokens per scale:")
+    tokens_by_scale = {scale: [] for scale in range(num_scales)}
+    for scale_str, token_id_str in all_matches:
+        scale = int(scale_str)
+        token_id = int(token_id_str)
+        if scale < num_scales:
+            tokens_by_scale[scale].append(token_id)
+
+    total_tokens = sum(len(tokens) for tokens in tokens_by_scale.values())
+
+    print(f"\nFound {total_tokens} audio tokens")
+    print(f"Raw tokens per scale (as generated):")
     for scale, tokens in sorted(tokens_by_scale.items()):
         print(f"  Scale {scale}: {len(tokens)} tokens")
 
@@ -113,20 +109,32 @@ def decode_with_snac(
         print("Error: No tokens found for scale 0 (coarse)")
         return None
 
+    base_length = len(tokens_by_scale[0])
+    print(f"\nAdjusting tokens to proper hierarchical structure (base length: {base_length})")
+
     codes = []
 
     for scale in range(num_total_scales):
+        expected_length = base_length * (2 ** scale)
+
         if scale in tokens_by_scale:
             token_list = tokens_by_scale[scale]
+            actual_length = len(token_list)
+
+            if actual_length < expected_length:
+                repeats = (expected_length + actual_length - 1) // actual_length
+                token_list = (token_list * repeats)[:expected_length]
+                print(f"  Scale {scale}: Repeated {actual_length} -> {expected_length} tokens")
+            elif actual_length > expected_length:
+                token_list = token_list[:expected_length]
+                print(f"  Scale {scale}: Truncated {actual_length} -> {expected_length} tokens")
+            else:
+                print(f"  Scale {scale}: Perfect length ({actual_length} tokens)")
+
             code_tensor = torch.tensor(token_list, dtype=torch.long).unsqueeze(0)
         else:
-            # pad with zeros for missing scales
-            if 0 in tokens_by_scale:
-                base_length = len(tokens_by_scale[0])
-                expected_length = base_length * (2 ** scale)
-            else:
-                expected_length = 100
             code_tensor = torch.zeros((1, expected_length), dtype=torch.long)
+            print(f"  Scale {scale}: Missing - filled with {expected_length} zeros")
 
         codes.append(code_tensor.to(device))
 

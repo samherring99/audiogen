@@ -22,11 +22,6 @@ def expand_tokenizer_and_model(
     # special tokens for audio
     special_tokens = ["<audio>", "</audio>"]
 
-    # add scale delimiter tokens: <s0>, </s0>, <s1>, </s1>, etc.
-    for scale in range(num_scales):
-        special_tokens.append(f"<s{scale}>")
-        special_tokens.append(f"</s{scale}>")
-
     # format: [AUDIO_S0_0], [AUDIO_S0_1], ..., [AUDIO_S0_4095] for scale 0 (coarse)
     #         [AUDIO_S1_0], [AUDIO_S1_1], ..., [AUDIO_S1_4095] for scale 1 (medium)
     audio_tokens = []
