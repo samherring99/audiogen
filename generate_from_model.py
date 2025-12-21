@@ -26,6 +26,7 @@ def generate_audio_tokens(
     tokenizer,
     prompt: str,
     max_new_tokens: int = 2000,
+    min_new_tokens: int = 600,
     temperature: float = 1.0,
     top_p: float = 0.95,
     device: str = "cuda"
@@ -43,7 +44,7 @@ def generate_audio_tokens(
 
     print(f"Input prompt: '{prompt}'")
     print(f"Input tokens shape: {input_ids.shape}")
-    print(f"Generating up to {max_new_tokens} tokens...")
+    print(f"Generating {min_new_tokens}-{max_new_tokens} tokens...")
 
     model = model.to(device)
     model.eval()
@@ -52,6 +53,7 @@ def generate_audio_tokens(
         output = model.generate(
             input_ids,
             max_new_tokens=max_new_tokens,
+            min_new_tokens=min_new_tokens,  # Enforce minimum length
             temperature=temperature,
             top_p=top_p,
             do_sample=True,
@@ -146,6 +148,7 @@ def generate_audio(
     prompt: str,
     output_path: str,
     max_new_tokens: int = 2000,
+    min_new_tokens: int = 600,
     temperature: float = 1.0,
     top_p: float = 0.95,
     device: str = "cuda"
@@ -161,6 +164,7 @@ def generate_audio(
     generated_ids = generate_audio_tokens(
         model, tokenizer, prompt,
         max_new_tokens=max_new_tokens,
+        min_new_tokens=min_new_tokens,
         temperature=temperature,
         top_p=top_p,
         device=device
@@ -196,6 +200,8 @@ if __name__ == "__main__":
                        help="Output audio file path")
     parser.add_argument("--max_tokens", type=int, default=2000,
                        help="Maximum tokens to generate")
+    parser.add_argument("--min_tokens", type=int, default=600,
+                       help="Minimum tokens to generate")
     parser.add_argument("--temperature", type=float, default=1.0,
                        help="Sampling temperature (0.1-2.0)")
     parser.add_argument("--top_p", type=float, default=0.95,
@@ -210,6 +216,7 @@ if __name__ == "__main__":
         prompt=args.prompt,
         output_path=args.output,
         max_new_tokens=args.max_tokens,
+        min_new_tokens=args.min_tokens,
         temperature=args.temperature,
         top_p=args.top_p,
         device=args.device
