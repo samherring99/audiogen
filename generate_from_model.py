@@ -71,24 +71,27 @@ def parse_audio_tokens(generated_ids, tokenizer, metadata):
     print(f"\nGenerated text preview:")
     print(generated_text[:500] + "..." if len(generated_text) > 500 else generated_text)
 
-    pattern = r'\[AUDIO_S(\d+)_(\d+)\]'
-    matches = re.findall(pattern, generated_text)
+    # scale sections: <s0>...tokens...</s0>
+    tokens_by_scale = {}
 
-    if not matches:
+    for scale in range(3):  # default to 3 scales
+        scale_pattern = rf'<s{scale}>(.*?)</s{scale}>'
+        scale_match = re.search(scale_pattern, generated_text)
+
+        if scale_match:
+            scale_content = scale_match.group(1)
+
+            token_pattern = rf'\[AUDIO_S{scale}_(\d+)\]'
+            token_matches = re.findall(token_pattern, scale_content)
+
+            if token_matches:
+                tokens_by_scale[scale] = [int(tid) for tid in token_matches]
+
+    if not tokens_by_scale:
         print("Warning: No audio tokens found in generation!")
         return None
 
-    print(f"\nFound {len(matches)} audio tokens")
-
-    tokens_by_scale = {}
-    for scale_str, token_id_str in matches:
-        scale = int(scale_str)
-        token_id = int(token_id_str)
-
-        if scale not in tokens_by_scale:
-            tokens_by_scale[scale] = []
-        tokens_by_scale[scale].append(token_id)
-
+    print(f"\nFound {sum(len(toks) for toks in tokens_by_scale.values())} audio tokens")
     print(f"Tokens per scale:")
     for scale, tokens in sorted(tokens_by_scale.items()):
         print(f"  Scale {scale}: {len(tokens)} tokens")

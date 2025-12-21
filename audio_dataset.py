@@ -42,11 +42,17 @@ class AudioGenerationDataset(Dataset):
         offset = 0
 
         for scale_idx, scale_length in enumerate(scale_lengths):
+            # scale start marker
+            token_strings.append(f"<s{scale_idx}>")
+
             scale_tokens = audio_token_ids[offset:offset + scale_length]
 
             for token_id in scale_tokens:
                 token_str = f"[AUDIO_S{scale_idx}_{token_id}]"
                 token_strings.append(token_str)
+
+            # scale end marker
+            token_strings.append(f"</s{scale_idx}>")
 
             offset += scale_length
 
