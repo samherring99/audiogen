@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
+from torch.utils.data import DataLoader
 
 class AudioGenerationDataset(Dataset):
     # formats audio tokens like: <audio>[AUDIO_S0_123][AUDIO_S0_456]...</audio>
@@ -36,17 +37,18 @@ class AudioGenerationDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def audio_tokens_to_string(self, audio_token_ids: List[int]) -> str:
-        tokens_per_scale = len(audio_token_ids) // self.num_scales
-
+    def audio_tokens_to_string(self, audio_token_ids: List[int], scale_lengths: List[int]) -> str:
         token_strings = []
-        for i, token_id in enumerate(audio_token_ids):
-            scale_idx = i // tokens_per_scale
-            if scale_idx >= self.num_scales:
-                scale_idx = self.num_scales - 1
+        offset = 0
 
-            token_str = f"[AUDIO_S{scale_idx}_{token_id}]" # IMPORTANT
-            token_strings.append(token_str)
+        for scale_idx, scale_length in enumerate(scale_lengths):
+            scale_tokens = audio_token_ids[offset:offset + scale_length]
+
+            for token_id in scale_tokens:
+                token_str = f"[AUDIO_S{scale_idx}_{token_id}]"
+                token_strings.append(token_str)
+
+            offset += scale_length
 
         return "".join(token_strings)
 
@@ -54,8 +56,13 @@ class AudioGenerationDataset(Dataset):
         sample = self.data[idx]
         prompt = sample["prompt"]
         audio_tokens = sample["audio_tokens"]
+        scale_lengths = sample.get("scale_lengths", None)
 
-        audio_sequence = self.audio_tokens_to_string(audio_tokens)
+        if scale_lengths is None:
+            tokens_per_scale = len(audio_tokens) // self.num_scales
+            scale_lengths = [tokens_per_scale] * self.num_scales
+
+        audio_sequence = self.audio_tokens_to_string(audio_tokens, scale_lengths)
 
         # TODO: maybe fix the generation prompting here
         messages = [
@@ -105,8 +112,6 @@ def create_dataloaders(
     num_workers: int = 4,
     **dataset_kwargs
 ):
-    from torch.utils.data import DataLoader
-
     train_dataset = AudioGenerationDataset(
         train_dataset_path,
         tokenizer_path,

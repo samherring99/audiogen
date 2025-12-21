@@ -13,6 +13,7 @@ from transformers import (
 
 from audio_dataset import AudioGenerationDataset
 
+import argparse
 
 # Sample training loop for small development case
 
@@ -237,7 +238,6 @@ def train(args: AudioTrainingArguments):
 
 
 if __name__ == "__main__":
-    import argparse
 
     parser = argparse.ArgumentParser()
 

@@ -74,17 +74,17 @@ def encode_audio_with_snac(
     return codes[:num_scales], codes
 
 
-def flatten_codes(codes: List[torch.Tensor]) -> List[int]:
+def flatten_codes(codes: List[torch.Tensor]) -> tuple[List[int], List[int]]:
     codes_cpu = [c.squeeze(0).cpu() for c in codes]  # Remove batch dimension
 
-    lengths = [c.shape[-1] for c in codes_cpu]
+    scale_lengths = [c.shape[-1] for c in codes_cpu]
 
-    # TODO: Could implement interleaving if scales have different temporal resolutions
+    # flatten all codes in order: [scale0_tokens, scale1_tokens, scale2_tokens, ...]
     flattened = []
     for code in codes_cpu:
         flattened.extend(code.flatten().tolist())
 
-    return flattened
+    return flattened, scale_lengths
 
 
 def validate_reconstruction(
@@ -179,11 +179,12 @@ def generate_dataset(
                 failed_samples.append(idx)
                 continue
 
-            audio_tokens = flatten_codes(codes_for_training)
+            audio_tokens, scale_lengths = flatten_codes(codes_for_training)
 
             entry = {
                 "prompt": prompt,
                 "audio_tokens": audio_tokens,
+                "scale_lengths": scale_lengths,
                 "audio_path": f"audio/{audio_filename}",
                 "duration": duration,
                 "n_tokens": len(audio_tokens),
