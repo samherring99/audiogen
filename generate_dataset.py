@@ -57,7 +57,11 @@ def encode_audio_with_snac(
     snac_model,
     num_scales: int,
     device: str
-) -> List[torch.Tensor]:
+) -> tuple[List[torch.Tensor], List[torch.Tensor]]:
+    if audio.shape[0] > 1:
+        audio = audio.mean(dim=0, keepdim=True)
+
+    # [batch, channels, samples]
     if audio.dim() == 2:
         audio = audio.unsqueeze(0)
 
@@ -66,7 +70,8 @@ def encode_audio_with_snac(
     with torch.no_grad():
         codes = snac_model.encode(audio)
 
-    return codes[:num_scales]
+    # Return codes for training and all codes for validation
+    return codes[:num_scales], codes
 
 
 def flatten_codes(codes: List[torch.Tensor]) -> List[int]:
@@ -102,11 +107,32 @@ def generate_dataset(
     output_dir: str,
     num_scales: int = 3,
     duration: float = 30.0,
-    device: str = "cuda"
+    device: str = "cuda",
+    resume: bool = True
 ):
     output_path = Path(output_dir)
     audio_path = output_path / "audio"
     audio_path.mkdir(parents=True, exist_ok=True)
+
+    dataset_file = output_path / "dataset.json"
+
+    dataset = []
+    failed_samples = []
+    processed_prompts = set()
+
+    if resume and dataset_file.exists():
+        print(f"Resuming from existing dataset: {dataset_file}")
+        with open(dataset_file, 'r') as f:
+            dataset = json.load(f)
+        processed_prompts = {entry["prompt"] for entry in dataset}
+        print(f"Found {len(dataset)} existing samples")
+
+    remaining_prompts = [p for p in prompts if p not in processed_prompts]
+    print(f"Processing {len(remaining_prompts)} new samples (skipping {len(prompts) - len(remaining_prompts)} already processed)")
+
+    if len(remaining_prompts) == 0:
+        print("All prompts already processed!")
+        return dataset, failed_samples
 
     print("Loading Stable Audio model...")
     stable_audio_model, model_config = get_pretrained_model("stabilityai/stable-audio-open-1.0")
@@ -120,11 +146,11 @@ def generate_dataset(
 
     target_sr = 44100
 
-    dataset = []
-    failed_samples = []
+    print(f"\nGenerating {len(remaining_prompts)} samples...")
+    start_idx = len(dataset)
 
-    print(f"\nGenerating {len(prompts)} samples...")
-    for idx, prompt in enumerate(tqdm(prompts)):
+    for i, prompt in enumerate(tqdm(remaining_prompts)):
+        idx = start_idx + i
         try:
             audio = generate_audio_from_prompt(
                 stable_audio_model,
@@ -145,14 +171,15 @@ def generate_dataset(
             else:
                 audio_for_snac = audio
 
-            codes = encode_audio_with_snac(audio_for_snac, snac_model, num_scales, device)
+            # get both training codes and all codes for validation
+            codes_for_training, codes_all = encode_audio_with_snac(audio_for_snac, snac_model, num_scales, device)
 
-            if not validate_reconstruction(audio_for_snac, codes, snac_model, device):
+            if not validate_reconstruction(audio_for_snac, codes_all, snac_model, device):
                 print(f"\nWarning: Reconstruction failed for sample {idx}")
                 failed_samples.append(idx)
                 continue
 
-            audio_tokens = flatten_codes(codes)
+            audio_tokens = flatten_codes(codes_for_training)
 
             entry = {
                 "prompt": prompt,
@@ -165,15 +192,14 @@ def generate_dataset(
 
             dataset.append(entry)
 
+            with open(dataset_file, 'w') as f:
+                json.dump(dataset, f, indent=2)
+
         except Exception as e:
             print(f"\nError processing prompt {idx}: {prompt}")
             print(f"Error: {e}")
             failed_samples.append(idx)
             continue
-
-    dataset_file = output_path / "dataset.json"
-    with open(dataset_file, 'w') as f:
-        json.dump(dataset, f, indent=2)
 
     print(f"\nDataset generation complete!")
     print(f"  Total samples: {len(dataset)}")
@@ -191,20 +217,38 @@ def generate_dataset(
 
 
 if __name__ == "__main__":
-    example_prompts = [
-        "upbeat electronic dance music",
-        "a dog barking loudly in a park",
-        "rain falling on a tin roof",
-        "jazz piano in a small cafe",
-        "ocean waves crashing on the beach",
-    ]
+    import sys
+
+    prompts_file = Path("prompts.json")
+    if prompts_file.exists():
+        print(f"Loading prompts from {prompts_file}")
+        with open(prompts_file, 'r') as f:
+            prompts = json.load(f)
+        print(f"Loaded {len(prompts)} prompts")
+    else:
+        print("prompts.json not found, using example prompts")
+        prompts = [
+            "upbeat electronic dance music",
+            "a dog barking loudly in a park",
+            "rain falling on a tin roof",
+            "jazz piano in a small cafe",
+            "ocean waves crashing on the beach",
+        ]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     dataset, failed = generate_dataset(
-        prompts=example_prompts,
+        prompts=prompts,
         output_dir="./data",
         num_scales=3,
         duration=10.0,
-        device=device
+        device=device,
+        resume=True
     )
+
+    print(f"\n{'='*50}")
+    print(f"Final Statistics:")
+    print(f"  Total successful samples: {len(dataset)}")
+    print(f"  Failed samples: {len(failed)}")
+    if failed:
+        print(f"  Failed indices: {failed}")
