@@ -245,7 +245,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_dataset", type=str, default="./data/train_dataset.json")
     parser.add_argument("--val_dataset", type=str, default="./data/val_dataset.json")
     parser.add_argument("--output_dir", type=str, default="./checkpoints")
-    parser.add_argument("--num_train_epochs", type=int, default=3)
+    parser.add_argument("--num_train_epochs", type=int, default=50)
     parser.add_argument("--per_device_train_batch_size", type=int, default=4)
     parser.add_argument("--per_device_eval_batch_size", type=int, default=4)
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4)

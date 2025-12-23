@@ -109,8 +109,22 @@ def decode_with_snac(
         print("Error: No tokens found for scale 0 (coarse)")
         return None
 
-    base_length = len(tokens_by_scale[0])
-    print(f"\nAdjusting tokens to proper hierarchical structure (base length: {base_length})")
+    # TODO: check if this is right in SNAC
+    raw_base_length = len(tokens_by_scale[0])
+    base_length = ((raw_base_length + 17) // 35) * 35  # round to nearest multiple of 35 
+
+    if base_length != raw_base_length:
+        print(f"\nAdjusting base length from {raw_base_length} to {base_length}")
+        token_list_s0 = tokens_by_scale[0]
+        if raw_base_length < base_length:
+            # pad by repeating
+            repeats = (base_length + raw_base_length - 1) // raw_base_length
+            tokens_by_scale[0] = (token_list_s0 * repeats)[:base_length]
+        else:
+            # truncate
+            tokens_by_scale[0] = token_list_s0[:base_length]
+
+    print(f"Using length: {base_length} (structure: {base_length}:{base_length*2}:{base_length*4}:{base_length*8})")
 
     codes = []
 
@@ -129,17 +143,17 @@ def decode_with_snac(
                 token_list = token_list[:expected_length]
                 print(f"  Scale {scale}: Truncated {actual_length} -> {expected_length} tokens")
             else:
-                print(f"  Scale {scale}: Perfect length ({actual_length} tokens)")
+                print(f"  Scale {scale}: {actual_length} tokens")
 
             code_tensor = torch.tensor(token_list, dtype=torch.long).unsqueeze(0)
         else:
             code_tensor = torch.zeros((1, expected_length), dtype=torch.long)
-            print(f"  Scale {scale}: Missing - filled with {expected_length} zeros")
+            print(f"  Scale {scale}: missing - filled with {expected_length} zeros")
 
         codes.append(code_tensor.to(device))
 
-    print(f"\nDecoding with SNAC...")
-    print(f"Code shapes: {[c.shape for c in codes]}")
+    print("\nDecoding with SNAC...")
+    print(f"code shapes: {[c.shape for c in codes]}")
 
     with torch.no_grad():
         audio = snac_model.decode(codes)
