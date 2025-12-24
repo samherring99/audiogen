@@ -103,11 +103,25 @@ def test_tokenization(tokenizer, metadata):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Prepare model with audio tokens")
+    parser.add_argument("--base_model", type=str, default="Qwen/Qwen2.5-0.5B",
+                       help="Base model to expand")
+    parser.add_argument("--output_dir", type=str, default="./models/qwen-audio",
+                       help="Output directory")
+    parser.add_argument("--num_audio_tokens", type=int, default=4096,
+                       help="Audio tokens per scale")
+    parser.add_argument("--num_scales", type=int, default=3,
+                       help="Number of scales")
+
+    args = parser.parse_args()
+
     tokenizer, model, metadata = expand_tokenizer_and_model(
-        base_model="Qwen/Qwen2.5-0.5B",
-        output_dir="./models/qwen-audio",
-        num_audio_tokens=4096,
-        num_scales=3
+        base_model=args.base_model,
+        output_dir=args.output_dir,
+        num_audio_tokens=args.num_audio_tokens,
+        num_scales=args.num_scales
     )
 
     test_tokenization(tokenizer, metadata)
