@@ -73,26 +73,36 @@ def parse_audio_tokens(generated_ids, tokenizer, metadata, num_scales=3):
     print(f"\nGenerated text preview:")
     print(generated_text[:500] + "..." if len(generated_text) > 500 else generated_text)
 
-    all_audio_pattern = r'\[AUDIO_S(\d+)_(\d+)\]'
-    all_matches = re.findall(all_audio_pattern, generated_text)
+    tokens_by_scale = {}
 
-    if not all_matches:
-        print("Warning: No audio tokens found in generation!")
+    for scale in range(num_scales):
+        scale_pattern = rf'<s{scale}>(.*?)</s{scale}>'
+        scale_match = re.search(scale_pattern, generated_text)
+
+        if scale_match:
+            scale_content = scale_match.group(1)
+            token_pattern = rf'\[AUDIO_S{scale}_(\d+)\]'
+            token_matches = re.findall(token_pattern, scale_content)
+
+            if token_matches:
+                tokens_by_scale[scale] = [int(tid) for tid in token_matches]
+
+    if not tokens_by_scale:
+        print("Warning: No audio tokens found!")
         return None
 
-    tokens_by_scale = {scale: [] for scale in range(num_scales)}
-    for scale_str, token_id_str in all_matches:
-        scale = int(scale_str)
-        token_id = int(token_id_str)
-        if scale < num_scales:
-            tokens_by_scale[scale].append(token_id)
-
-    total_tokens = sum(len(tokens) for tokens in tokens_by_scale.values())
-
-    print(f"\nFound {total_tokens} audio tokens")
-    print(f"Raw tokens per scale (as generated):")
+    print(f"\nFound {sum(len(toks) for toks in tokens_by_scale.values())} audio tokens")
+    print(f"Tokens per scale:")
     for scale, tokens in sorted(tokens_by_scale.items()):
         print(f"  Scale {scale}: {len(tokens)} tokens")
+
+    if 0 in tokens_by_scale:
+        s0 = len(tokens_by_scale[0])
+        for s in [1, 2]:
+            if s in tokens_by_scale:
+                actual = len(tokens_by_scale[s])
+                expected = s0 * (2 ** s)
+                print(f"  Scale {s} ratio: {actual/s0:.2f}x (expected {2**s}x, diff: {actual-expected:+d})")
 
     return tokens_by_scale
 
