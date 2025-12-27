@@ -55,12 +55,10 @@ class ConstrainedAudioModel(Model):
         return self.base_length * (2 ** scale)
 
     async def step(self):
-        # state 0: Generate <audio> token
+        # state 0: Generate <audio> token(s)
         if self.current_scale == -1:
             for token_id in self.audio_start:
                 await self.observe(self.context.next_token(), token_id)
-                token = await self.sample(self.context.next_token())
-                self.generated_tokens.append(token)
 
             # Move to scale 0
             self.current_scale = 0
@@ -69,8 +67,6 @@ class ConstrainedAudioModel(Model):
             # Force <s0>
             for token_id in self.scale_delimiters["start_0"]:
                 await self.observe(self.context.next_token(), token_id)
-                token = await self.sample(self.context.next_token())
-                self.generated_tokens.append(token)
 
             print(f"{GREEN}Starting Scale 0{END} (target: {self.get_expected_length_for_scale(0)} tokens)")
             return
@@ -112,8 +108,6 @@ class ConstrainedAudioModel(Model):
                 # force </sN>
                 for token_id in self.scale_delimiters[f"end_{self.current_scale}"]:
                     await self.observe(self.context.next_token(), token_id)
-                    token = await self.sample(self.context.next_token())
-                    self.generated_tokens.append(token)
 
                 # move to next scale or finish
                 self.current_scale += 1
@@ -123,16 +117,12 @@ class ConstrainedAudioModel(Model):
                     # force <sN>
                     for token_id in self.scale_delimiters[f"start_{self.current_scale}"]:
                         await self.observe(self.context.next_token(), token_id)
-                        token = await self.sample(self.context.next_token())
-                        self.generated_tokens.append(token)
 
                     print(f"{GREEN}Starting Scale {self.current_scale}{END} (target: {self.get_expected_length_for_scale(self.current_scale)} tokens)")
                 else:
                     # force </audio> and finish
                     for token_id in self.audio_end:
                         await self.observe(self.context.next_token(), token_id)
-                        token = await self.sample(self.context.next_token())
-                        self.generated_tokens.append(token)
 
                     print(f"{GREEN}✓ Generation Complete!{END}")
                     self.finish()
