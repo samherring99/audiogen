@@ -77,18 +77,12 @@ class ConstrainedAudioModel(Model):
 
             # still generating tokens for this scale
             if self.tokens_in_current_scale < expected_length:
-                # mask out scale end delimiter to prevent early stopping
-                end_delimiter_ids = set(self.scale_delimiters[f"end_{self.current_scale}"])
-                audio_end_ids = set(self.audio_end)
-                forbidden = end_delimiter_ids | audio_end_ids
-
                 # only allow audio tokens for current scale
                 allowed = self.audio_token_ids[self.current_scale]
 
-                # If not at end, also forbid next scale delimiters
-                if self.current_scale < self.num_scales - 1:
-                    next_start = set(self.scale_delimiters[f"start_{self.current_scale + 1}"])
-                    forbidden |= next_start
+                # forbid everything EXCEPT allowed audio tokens
+                all_token_ids = set(range(len(self.lm.tokenizer)))
+                forbidden = all_token_ids - allowed
 
                 await self.observe(self.context.mask_dist(forbidden), False)
 
