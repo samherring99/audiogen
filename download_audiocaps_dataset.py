@@ -1,0 +1,240 @@
+import json
+import time
+import argparse
+from pathlib import Path
+from typing import List, Dict
+import torch
+from datasets import load_dataset
+from snac import SNAC
+import torchaudio
+from tqdm import tqdm
+
+from download_youtube_audio import download_youtube_segment
+
+
+def encode_audio_with_snac(audio_path: str, device: str = "cuda") -> Dict:
+    snac_model = SNAC.from_pretrained("hubertsiuzdak/snac_44khz").eval().to(device)
+    audio, sr = torchaudio.load(audio_path)
+
+    if audio.shape[0] > 1:
+        audio = audio.mean(dim=0, keepdim=True)
+
+    if sr != 44100:
+        resampler = torchaudio.transforms.Resample(sr, 44100)
+        audio = resampler(audio)
+
+    audio = audio.unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        codes = snac_model.encode(audio)
+
+    audio_tokens = []
+    scale_lengths = []
+
+    for scale_idx in range(3):
+        scale_codes = codes[scale_idx].squeeze(0).cpu().tolist()
+        audio_tokens.extend(scale_codes)
+        scale_lengths.append(len(scale_codes))
+
+    return {
+        "audio_tokens": audio_tokens,
+        "scale_lengths": scale_lengths
+    }
+
+
+def download_and_process_audiocaps(
+    output_dir: str = "./data/audiocaps",
+    split: str = "train",
+    max_samples: int = None,
+    delay_seconds: float = 2.0,
+    checkpoint_every: int = 100,
+    device: str = "cuda",
+    start_index: int = 0
+):
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    audio_dir = output_path / "audio"
+    audio_dir.mkdir(exist_ok=True)
+
+    dataset_file = output_path / f"{split}_dataset.json"
+    checkpoint_file = output_path / f"{split}_checkpoint.json"
+    failed_file = output_path / f"{split}_failed.json"
+
+    print(f"{'='*60}")
+    print(f"AudioCaps Dataset Download & Processing")
+    print(f"{'='*60}")
+    print(f"Split: {split}")
+    print(f"Output: {output_path}")
+    print(f"Delay: {delay_seconds}s between downloads")
+    print(f"Checkpoints every: {checkpoint_every} samples")
+    print(f"{'='*60}\n")
+
+    print("Loading AudioCaps dataset from HuggingFace...")
+    dataset = load_dataset("d0rj/audiocaps", split=split)
+
+    if max_samples:
+        dataset = dataset.select(range(min(max_samples, len(dataset))))
+
+    print(f"Loaded {len(dataset)} samples\n")
+
+    processed_data = []
+    failed_downloads = []
+
+    if checkpoint_file.exists():
+        print(f"Loading checkpoint from {checkpoint_file}")
+        with open(checkpoint_file, 'r') as f:
+            checkpoint = json.load(f)
+            processed_data = checkpoint.get('data', [])
+            start_index = len(processed_data)
+        print(f"Resuming from index {start_index}\n")
+
+    if failed_file.exists():
+        with open(failed_file, 'r') as f:
+            failed_downloads = json.load(f)
+
+    print("Loading SNAC encoder...")
+    snac_model = SNAC.from_pretrained("hubertsiuzdak/snac_44khz").eval().to(device)
+    print("SNAC loaded!\n")
+
+    for idx in tqdm(range(start_index, len(dataset)), desc="Processing"):
+        sample = dataset[idx]
+
+        youtube_id = sample['youtube_id']
+        start_time = sample['start_time']
+        caption = sample['caption']
+
+        audio_file = audio_dir / f"{idx:06d}_{youtube_id}_{int(start_time)}.wav"
+
+        try:
+            if not audio_file.exists():
+                result = download_youtube_segment(
+                    video_id=youtube_id,
+                    start_time=start_time,
+                    duration=10.0,
+                    output_path=str(audio_file),
+                    sample_rate=44100
+                )
+
+                if result is None:
+                    print(f"\nFailed to download {youtube_id} at {start_time}s")
+                    failed_downloads.append({
+                        'index': idx,
+                        'youtube_id': youtube_id,
+                        'start_time': start_time,
+                        'caption': caption,
+                        'error': 'download_failed'
+                    })
+
+                    with open(failed_file, 'w') as f:
+                        json.dump(failed_downloads, f, indent=2)
+
+                    time.sleep(delay_seconds)
+                    continue
+
+                time.sleep(delay_seconds)
+
+            audio = torchaudio.load(str(audio_file))[0]
+
+            if audio.shape[0] > 1:
+                audio = audio.mean(dim=0, keepdim=True)
+
+            audio = audio.unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                codes = snac_model.encode(audio)
+
+            audio_tokens = []
+            scale_lengths = []
+
+            for scale_idx in range(3):
+                scale_codes = codes[scale_idx].squeeze(0).cpu().tolist()
+                audio_tokens.extend(scale_codes)
+                scale_lengths.append(len(scale_codes))
+
+            entry = {
+                "prompt": caption,
+                "audio_tokens": audio_tokens,
+                "scale_lengths": scale_lengths,
+                "youtube_id": youtube_id,
+                "start_time": start_time,
+                "audio_file": str(audio_file.relative_to(output_path))
+            }
+
+            processed_data.append(entry)
+
+            if (idx + 1) % checkpoint_every == 0:
+                print(f"\nSaving checkpoint at {idx + 1} samples...")
+                with open(checkpoint_file, 'w') as f:
+                    json.dump({'data': processed_data}, f, indent=2)
+
+                print(f"   Processed: {len(processed_data)}")
+                print(f"   Failed: {len(failed_downloads)}")
+
+        except Exception as e:
+            print(f"\nError processing {youtube_id}: {e}")
+            failed_downloads.append({
+                'index': idx,
+                'youtube_id': youtube_id,
+                'start_time': start_time,
+                'caption': caption,
+                'error': str(e)
+            })
+
+            with open(failed_file, 'w') as f:
+                json.dump(failed_downloads, f, indent=2)
+
+            continue
+
+    print(f"\n{'='*60}")
+    print("Processing complete!")
+    print(f"{'='*60}")
+    print(f"Successfully processed: {len(processed_data)}")
+    print(f"Failed: {len(failed_downloads)}")
+
+    with open(dataset_file, 'w') as f:
+        json.dump(processed_data, f, indent=2)
+
+    print(f"\nDataset saved to: {dataset_file}")
+    print(f"   Total samples: {len(processed_data)}")
+
+    if failed_downloads:
+        print(f"\nFailed downloads saved to: {failed_file}")
+        print(f"   Total failed: {len(failed_downloads)}")
+
+    if checkpoint_file.exists():
+        checkpoint_file.unlink()
+
+    return processed_data, failed_downloads
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Download and process AudioCaps dataset")
+    parser.add_argument("--output_dir", type=str, default="./data/audiocaps",
+                       help="Output directory")
+    parser.add_argument("--split", type=str, default="train",
+                       choices=["train", "val", "test"],
+                       help="Dataset split to process")
+    parser.add_argument("--max_samples", type=int, default=None,
+                       help="Maximum samples to process (None = all)")
+    parser.add_argument("--delay", type=float, default=2.0,
+                       help="Delay in seconds between downloads")
+    parser.add_argument("--checkpoint_every", type=int, default=100,
+                       help="Save checkpoint every N samples")
+    parser.add_argument("--device", type=str, default="cuda",
+                       help="Device for SNAC encoding")
+    parser.add_argument("--start_index", type=int, default=0,
+                       help="Start from this index (for resuming)")
+
+    args = parser.parse_args()
+
+    download_and_process_audiocaps(
+        output_dir=args.output_dir,
+        split=args.split,
+        max_samples=args.max_samples,
+        delay_seconds=args.delay,
+        checkpoint_every=args.checkpoint_every,
+        device=args.device,
+        start_index=args.start_index
+    )
