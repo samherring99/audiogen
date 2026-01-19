@@ -1,6 +1,7 @@
 import json
 import time
 import argparse
+import random
 from pathlib import Path
 from typing import List, Dict
 import torch
@@ -47,9 +48,13 @@ def download_and_process_audiocaps(
     split: str = "train",
     max_samples: int = None,
     delay_seconds: float = 2.0,
+    delay_jitter: float = 1.0,
+    long_pause_every: int = 50,
+    long_pause_duration: tuple = (30, 60),
     checkpoint_every: int = 100,
     device: str = "cuda",
-    start_index: int = 0
+    start_index: int = 0,
+    max_retries: int = 3
 ):
 
     output_path = Path(output_dir)
@@ -67,7 +72,9 @@ def download_and_process_audiocaps(
     print(f"{'='*60}")
     print(f"Split: {split}")
     print(f"Output: {output_path}")
-    print(f"Delay: {delay_seconds}s between downloads")
+    print(f"Delay: {delay_seconds}s ± {delay_jitter}s (randomized)")
+    print(f"Long pause every: {long_pause_every} downloads ({long_pause_duration[0]}-{long_pause_duration[1]}s)")
+    print(f"Max retries: {max_retries}")
     print(f"Checkpoints every: {checkpoint_every} samples")
     print(f"{'='*60}\n")
 
@@ -98,6 +105,8 @@ def download_and_process_audiocaps(
     snac_model = SNAC.from_pretrained("hubertsiuzdak/snac_44khz").eval().to(device)
     print("SNAC loaded!\n")
 
+    successful_downloads = 0 
+
     for idx in tqdm(range(start_index, len(dataset)), desc="Processing"):
         sample = dataset[idx]
 
@@ -109,16 +118,26 @@ def download_and_process_audiocaps(
 
         try:
             if not audio_file.exists():
-                result = download_youtube_segment(
-                    video_id=youtube_id,
-                    start_time=start_time,
-                    duration=10.0,
-                    output_path=str(audio_file),
-                    sample_rate=44100
-                )
+                result = None
+                for retry in range(max_retries):
+                    result = download_youtube_segment(
+                        video_id=youtube_id,
+                        start_time=start_time,
+                        duration=10.0,
+                        output_path=str(audio_file),
+                        sample_rate=44100
+                    )
+
+                    if result is not None:
+                        break
+
+                    if retry < max_retries - 1:
+                        retry_delay = delay_seconds * (2 ** retry)
+                        print(f"\n  Retry {retry + 1}/{max_retries} in {retry_delay:.1f}s...")
+                        time.sleep(retry_delay)
 
                 if result is None:
-                    print(f"\nFailed to download {youtube_id} at {start_time}s")
+                    print(f"\nFailed to download {youtube_id} after {max_retries} attempts")
                     failed_downloads.append({
                         'index': idx,
                         'youtube_id': youtube_id,
@@ -130,10 +149,19 @@ def download_and_process_audiocaps(
                     with open(failed_file, 'w') as f:
                         json.dump(failed_downloads, f, indent=2)
 
-                    time.sleep(delay_seconds)
+                    actual_delay = delay_seconds + random.uniform(-delay_jitter, delay_jitter)
+                    time.sleep(max(0.5, actual_delay))
                     continue
 
-                time.sleep(delay_seconds)
+                successful_downloads += 1
+
+                actual_delay = delay_seconds + random.uniform(-delay_jitter, delay_jitter)
+                time.sleep(max(0.5, actual_delay))
+
+                if successful_downloads % long_pause_every == 0:
+                    pause = random.uniform(long_pause_duration[0], long_pause_duration[1])
+                    print(f"\nTaking a {pause:.0f}s break after {successful_downloads} downloads...")
+                    time.sleep(pause)
 
             audio = torchaudio.load(str(audio_file))[0]
 
@@ -218,8 +246,18 @@ if __name__ == "__main__":
                        help="Dataset split to process")
     parser.add_argument("--max_samples", type=int, default=None,
                        help="Maximum samples to process (None = all)")
-    parser.add_argument("--delay", type=float, default=2.0,
-                       help="Delay in seconds between downloads")
+    parser.add_argument("--delay", type=float, default=3.0,
+                       help="Base delay in seconds between downloads (will be randomized)")
+    parser.add_argument("--delay_jitter", type=float, default=2.0,
+                       help="Random jitter to add/subtract from delay (±seconds)")
+    parser.add_argument("--long_pause_every", type=int, default=50,
+                       help="Take a longer pause every N successful downloads")
+    parser.add_argument("--long_pause_min", type=float, default=30.0,
+                       help="Minimum long pause duration in seconds")
+    parser.add_argument("--long_pause_max", type=float, default=90.0,
+                       help="Maximum long pause duration in seconds")
+    parser.add_argument("--max_retries", type=int, default=3,
+                       help="Maximum retry attempts for failed downloads")
     parser.add_argument("--checkpoint_every", type=int, default=100,
                        help="Save checkpoint every N samples")
     parser.add_argument("--device", type=str, default="cuda",
@@ -234,6 +272,10 @@ if __name__ == "__main__":
         split=args.split,
         max_samples=args.max_samples,
         delay_seconds=args.delay,
+        delay_jitter=args.delay_jitter,
+        long_pause_every=args.long_pause_every,
+        long_pause_duration=(args.long_pause_min, args.long_pause_max),
+        max_retries=args.max_retries,
         checkpoint_every=args.checkpoint_every,
         device=args.device,
         start_index=args.start_index
