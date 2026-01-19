@@ -54,7 +54,9 @@ def download_and_process_audiocaps(
     checkpoint_every: int = 100,
     device: str = "cuda",
     start_index: int = 0,
-    max_retries: int = 3
+    max_retries: int = 3,
+    shuffle: bool = False,
+    random_seed: int = 42
 ):
 
     output_path = Path(output_dir)
@@ -66,12 +68,14 @@ def download_and_process_audiocaps(
     dataset_file = output_path / f"{split}_dataset.json"
     checkpoint_file = output_path / f"{split}_checkpoint.json"
     failed_file = output_path / f"{split}_failed.json"
+    shuffle_file = output_path / f"{split}_shuffle_order.json"
 
     print(f"{'='*60}")
     print(f"AudioCaps Dataset Download & Processing")
     print(f"{'='*60}")
     print(f"Split: {split}")
     print(f"Output: {output_path}")
+    print(f"Shuffle: {shuffle} (seed: {random_seed if shuffle else 'N/A'})")
     print(f"Delay: {delay_seconds}s ± {delay_jitter}s (randomized)")
     print(f"Long pause every: {long_pause_every} downloads ({long_pause_duration[0]}-{long_pause_duration[1]}s)")
     print(f"Max retries: {max_retries}")
@@ -84,18 +88,48 @@ def download_and_process_audiocaps(
     if max_samples:
         dataset = dataset.select(range(min(max_samples, len(dataset))))
 
-    print(f"Loaded {len(dataset)} samples\n")
+    print(f"Loaded {len(dataset)} samples")
 
+    # Load existing progress first
     processed_data = []
     failed_downloads = []
+    processed_indices = set()
 
     if checkpoint_file.exists():
         print(f"Loading checkpoint from {checkpoint_file}")
         with open(checkpoint_file, 'r') as f:
             checkpoint = json.load(f)
             processed_data = checkpoint.get('data', [])
-            start_index = len(processed_data)
-        print(f"Resuming from index {start_index}\n")
+            processed_indices = {entry.get('original_index', i) for i, entry in enumerate(processed_data)}
+        print(f"Found {len(processed_data)} already processed samples\n")
+
+    if shuffle:
+        if shuffle_file.exists() and not checkpoint_file.exists():
+            print(f"Loading existing shuffle order from {shuffle_file}")
+            with open(shuffle_file, 'r') as f:
+                indices = json.load(f)
+        else:
+            remaining_indices = [i for i in range(len(dataset)) if i not in processed_indices]
+
+            if remaining_indices:
+                print(f"Shuffling {len(remaining_indices)} remaining samples (seed: {random_seed})")
+                random.seed(random_seed)
+                random.shuffle(remaining_indices)
+
+                already_processed_in_order = [entry.get('original_index', i) for i, entry in enumerate(processed_data)]
+                indices = already_processed_in_order + remaining_indices
+
+                with open(shuffle_file, 'w') as f:
+                    json.dump(indices, f)
+            else:
+                indices = list(range(len(dataset)))
+
+        print(f"Processing in shuffled order\n")
+    else:
+        indices = list(range(len(dataset)))
+        print(f"Processing in original order\n")
+
+    start_index = len(processed_data)
 
     if failed_file.exists():
         with open(failed_file, 'r') as f:
@@ -105,9 +139,10 @@ def download_and_process_audiocaps(
     snac_model = SNAC.from_pretrained("hubertsiuzdak/snac_44khz").eval().to(device)
     print("SNAC loaded!\n")
 
-    successful_downloads = 0 
+    successful_downloads = 0
 
-    for idx in tqdm(range(start_index, len(dataset)), desc="Processing"):
+    for progress_idx in tqdm(range(start_index, len(indices)), desc="Processing"):
+        idx = indices[progress_idx]
         sample = dataset[idx]
 
         youtube_id = sample['youtube_id']
@@ -187,13 +222,14 @@ def download_and_process_audiocaps(
                 "scale_lengths": scale_lengths,
                 "youtube_id": youtube_id,
                 "start_time": start_time,
-                "audio_file": str(audio_file.relative_to(output_path))
+                "audio_file": str(audio_file.relative_to(output_path)),
+                "original_index": idx
             }
 
             processed_data.append(entry)
 
-            if (idx + 1) % checkpoint_every == 0:
-                print(f"\nSaving checkpoint at {idx + 1} samples...")
+            if (progress_idx + 1) % checkpoint_every == 0:
+                print(f"\nSaving checkpoint at {progress_idx + 1} samples...")
                 with open(checkpoint_file, 'w') as f:
                     json.dump({'data': processed_data}, f, indent=2)
 
@@ -264,6 +300,10 @@ if __name__ == "__main__":
                        help="Device for SNAC encoding")
     parser.add_argument("--start_index", type=int, default=0,
                        help="Start from this index (for resuming)")
+    parser.add_argument("--shuffle", action="store_true",
+                       help="Shuffle processing order to avoid clusters of unavailable videos")
+    parser.add_argument("--random_seed", type=int, default=42,
+                       help="Random seed for shuffling (only used if --shuffle is set)")
 
     args = parser.parse_args()
 
@@ -278,5 +318,7 @@ if __name__ == "__main__":
         max_retries=args.max_retries,
         checkpoint_every=args.checkpoint_every,
         device=args.device,
-        start_index=args.start_index
+        start_index=args.start_index,
+        shuffle=args.shuffle,
+        random_seed=args.random_seed
     )
