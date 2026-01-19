@@ -56,7 +56,9 @@ def download_and_process_audiocaps(
     start_index: int = 0,
     max_retries: int = 3,
     shuffle: bool = False,
-    random_seed: int = 42
+    random_seed: int = 42,
+    cookies_from_browser: str = None,
+    cookies_file: str = None
 ):
 
     output_path = Path(output_dir)
@@ -160,7 +162,9 @@ def download_and_process_audiocaps(
                         start_time=start_time,
                         duration=10.0,
                         output_path=str(audio_file),
-                        sample_rate=44100
+                        sample_rate=44100,
+                        cookies_from_browser=cookies_from_browser,
+                        cookies_file=cookies_file
                     )
 
                     if result is not None:
@@ -304,6 +308,10 @@ if __name__ == "__main__":
                        help="Shuffle processing order to avoid clusters of unavailable videos")
     parser.add_argument("--random_seed", type=int, default=42,
                        help="Random seed for shuffling (only used if --shuffle is set)")
+    parser.add_argument("--cookies-from-browser", type=str, default=None,
+                       help="Browser to extract cookies from (e.g., 'chrome', 'firefox', 'safari')")
+    parser.add_argument("--cookies", type=str, default=None,
+                       help="Path to cookies.txt file exported from browser")
 
     args = parser.parse_args()
 
@@ -320,5 +328,7 @@ if __name__ == "__main__":
         device=args.device,
         start_index=args.start_index,
         shuffle=args.shuffle,
-        random_seed=args.random_seed
+        random_seed=args.random_seed,
+        cookies_from_browser=getattr(args, 'cookies_from_browser', None),
+        cookies_file=getattr(args, 'cookies', None)
     )

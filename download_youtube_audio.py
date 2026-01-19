@@ -10,7 +10,9 @@ def download_youtube_segment(
     start_time: float,
     duration: float = 10.0,
     output_path: str = None,
-    sample_rate: int = 44100
+    sample_rate: int = 44100,
+    cookies_from_browser: str = None,
+    cookies_file: str = None
 ):
 
     if output_path is None:
@@ -32,8 +34,14 @@ def download_youtube_segment(
         '--audio-format', 'm4a',
         '--postprocessor-args', f'ffmpeg:-ss {start_time} -t {duration}',
         '-o', str(temp_file),
-        url
     ]
+
+    if cookies_from_browser:
+        cmd.extend(['--cookies-from-browser', cookies_from_browser])
+    elif cookies_file:
+        cmd.extend(['--cookies', cookies_file])
+
+    cmd.append(url)
 
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
