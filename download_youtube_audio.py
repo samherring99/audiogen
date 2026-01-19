@@ -35,16 +35,10 @@ def download_youtube_segment(
         '-o', str(temp_file),
     ]
 
-    # Add cookies if specified
     if cookies_from_browser:
         cmd.extend(['--cookies-from-browser', cookies_from_browser])
     elif cookies_file:
         cmd.extend(['--cookies', cookies_file])
-
-    # Use ios client when using cookies (supports cookies better than android)
-    # Use android client when not using cookies
-    if cookies_from_browser or cookies_file:
-        cmd.extend(['--extractor-args', 'youtube:player_client=ios'])
     else:
         cmd.extend(['--extractor-args', 'youtube:player_client=android'])
 
