@@ -29,12 +29,14 @@ def download_youtube_segment(
 
     cmd = [
         'yt-dlp',
-        '--extractor-args', 'youtube:player_client=android',  # use android client to avoid 403
         '-x',
         '--audio-format', 'm4a',
         '--postprocessor-args', f'ffmpeg:-ss {start_time} -t {duration}',
         '-o', str(temp_file),
     ]
+
+    if not cookies_from_browser and not cookies_file:
+        cmd.extend(['--extractor-args', 'youtube:player_client=android'])
 
     if cookies_from_browser:
         cmd.extend(['--cookies-from-browser', cookies_from_browser])
