@@ -53,40 +53,57 @@ def process_tar(
 ) -> list[AudioRecord]:
     records = []
     tar_name = Path(tar_path).name
+    stats = {"found": 0, "load_fail": 0, "too_short": 0, "too_long": 0, "encode_fail": 0, "ok": 0}
 
     for audio_bytes, transcript, source_id in iter_tar_examples(tar_path):
+        stats["found"] += 1
         try:
             waveform, orig_sr = torchaudio.load(io.BytesIO(audio_bytes))
-        except Exception:
+        except Exception as e:
+            print(f"Warning: audio load failed for {source_id}: {e}", file=sys.stderr)
+            stats["load_fail"] += 1
             continue
 
-        # Mono + resample to codec's sample rate
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
         if orig_sr != codec.sample_rate:
             waveform = torchaudio.functional.resample(waveform, orig_sr, codec.sample_rate)
 
         duration_s = waveform.shape[1] / codec.sample_rate
-        if duration_s < min_duration_s or duration_s > max_duration_s:
+        if duration_s < min_duration_s:
+            stats["too_short"] += 1
+            continue
+        if duration_s > max_duration_s:
+            stats["too_long"] += 1
             continue
 
         try:
             output = codec.encode(waveform)
         except Exception as e:
             print(f"Warning: encode failed for {source_id}: {e}", file=sys.stderr)
+            stats["encode_fail"] += 1
             continue
 
+        stats["ok"] += 1
         records.append(
             AudioRecord(
                 prompt=f"Generate speech audio: {transcript}",
                 tokens=output.to_flat_tokens(),
-                codec="moss" if hasattr(output, "num_codebooks") and not hasattr(output, "scale_lengths") else "snac",
+                codec="moss" if not hasattr(output, "scale_lengths") else "snac",
                 num_codebooks=output.num_codebooks,
                 num_frames=output.num_frames,
                 scale_lengths=getattr(output, "scale_lengths", None),
                 source_path=f"{tar_name}/{source_id}",
                 duration=round(duration_s, 2),
             )
+        )
+
+    if stats["found"] > 0:
+        print(
+            f"{tar_name}: found={stats['found']} ok={stats['ok']} "
+            f"too_short={stats['too_short']} too_long={stats['too_long']} "
+            f"load_fail={stats['load_fail']} encode_fail={stats['encode_fail']}",
+            file=sys.stderr,
         )
 
     return records

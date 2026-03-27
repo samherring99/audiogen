@@ -20,10 +20,11 @@ def main():
     parser.add_argument("--max_duration", type=float, default=30.0)
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--dtype", default="bfloat16", choices=["float32", "float16", "bfloat16"])
+    parser.add_argument("--dtype", default=None, choices=["float32", "float16", "bfloat16"],
+                        help="Model dtype. Defaults to float32 on CPU, bfloat16 on CUDA.")
     args = parser.parse_args()
 
-    dtype = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}[args.dtype]
+    dtype = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}[args.dtype] if args.dtype else None
     codec = load_codec("moss", model_path=args.model_path, device=args.device, num_codebooks=args.num_codebooks, dtype=dtype)
 
     tar_files = sorted(Path(args.tar_dir).glob("**/*.tar"))

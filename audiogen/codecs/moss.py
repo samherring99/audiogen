@@ -61,7 +61,12 @@ class MOSSCodec(CodecBase):
 
         # Let HF move weights to the right device/dtype rather than calling .to() after,
         # which can trigger recompilation issues on mismatched CUDA architectures.
-        load_dtype = dtype if dtype is not None else (torch.float16 if device != "cpu" else torch.float32)
+        if dtype is not None:
+            load_dtype = dtype
+        elif device == "cpu":
+            load_dtype = torch.float32  # CPU doesn't support float16/bfloat16 ops for this model
+        else:
+            load_dtype = torch.bfloat16
         model = AutoModel.from_pretrained(
             path, trust_remote_code=True, torch_dtype=load_dtype
         ).eval().to(device)
