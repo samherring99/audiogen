@@ -53,20 +53,31 @@ class MOSSCodec(CodecBase):
         model_path: str | None = None,
         device: str = "cpu",
         num_codebooks: int = 8,
+        dtype: torch.dtype | None = None,
         **kwargs,
     ) -> "MOSSCodec":
         from transformers import AutoModel
         path = model_path or _DEFAULT_MODEL
-        model = AutoModel.from_pretrained(path, trust_remote_code=True).eval().to(device)
+
+        # Let HF move weights to the right device/dtype rather than calling .to() after,
+        # which can trigger recompilation issues on mismatched CUDA architectures.
+        load_kwargs: dict = {"trust_remote_code": True}
+        if dtype is not None:
+            load_kwargs["torch_dtype"] = dtype
+        elif device != "cpu":
+            load_kwargs["torch_dtype"] = torch.float16
+
+        model = AutoModel.from_pretrained(path, **load_kwargs, device_map=device).eval()
         return cls(model, torch.device(device), n_codebooks=num_codebooks)
 
     def _prepare(self, waveform: torch.Tensor) -> torch.Tensor:
-        """Ensure mono, resample to 24kHz, shape (1, 1, samples)."""
+        """Ensure mono, shape (1, 1, samples), matched to model device/dtype."""
         if waveform.dim() == 1:
             waveform = waveform.unsqueeze(0)
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
-        return waveform.unsqueeze(0).to(self._device)  # (1, 1, samples)
+        model_dtype = next(self._model.parameters()).dtype
+        return waveform.unsqueeze(0).to(device=self._device, dtype=model_dtype)
 
     def encode(self, waveform: torch.Tensor) -> MOSSOutput:
         audio = self._prepare(waveform)
