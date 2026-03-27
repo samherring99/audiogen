@@ -61,13 +61,10 @@ class MOSSCodec(CodecBase):
 
         # Let HF move weights to the right device/dtype rather than calling .to() after,
         # which can trigger recompilation issues on mismatched CUDA architectures.
-        load_kwargs: dict = {"trust_remote_code": True}
-        if dtype is not None:
-            load_kwargs["torch_dtype"] = dtype
-        elif device != "cpu":
-            load_kwargs["torch_dtype"] = torch.float16
-
-        model = AutoModel.from_pretrained(path, **load_kwargs, device_map=device).eval()
+        load_dtype = dtype if dtype is not None else (torch.float16 if device != "cpu" else torch.float32)
+        model = AutoModel.from_pretrained(
+            path, trust_remote_code=True, torch_dtype=load_dtype
+        ).eval().to(device)
         return cls(model, torch.device(device), n_codebooks=num_codebooks)
 
     def _prepare(self, waveform: torch.Tensor) -> torch.Tensor:
