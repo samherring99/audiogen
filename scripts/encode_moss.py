@@ -1,6 +1,8 @@
 import argparse
 from pathlib import Path
 
+import torch
+
 from tqdm import tqdm
 
 from audiogen.codecs import load_codec
@@ -18,9 +20,11 @@ def main():
     parser.add_argument("--max_duration", type=float, default=30.0)
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--dtype", default="bfloat16", choices=["float32", "float16", "bfloat16"])
     args = parser.parse_args()
 
-    codec = load_codec("moss", model_path=args.model_path, device=args.device, num_codebooks=args.num_codebooks)
+    dtype = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}[args.dtype]
+    codec = load_codec("moss", model_path=args.model_path, device=args.device, num_codebooks=args.num_codebooks, dtype=dtype)
 
     tar_files = sorted(Path(args.tar_dir).glob("**/*.tar"))
     if not tar_files:
