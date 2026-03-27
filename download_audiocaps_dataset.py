@@ -92,7 +92,6 @@ def download_and_process_audiocaps(
 
     print(f"Loaded {len(dataset)} samples")
 
-    # Load existing progress first
     processed_data = []
     failed_downloads = []
     processed_indices = set()
