@@ -32,10 +32,10 @@ class SFTConfig:
     per_device_train_batch_size: int = 4
     per_device_eval_batch_size: int = 4
     gradient_accumulation_steps: int = 4
-    learning_rate: float = 1e-4
+    learning_rate: float = 1e-5
     weight_decay: float = 0.01
-    warmup_steps: int = 100
-    max_grad_norm: float = 1.0
+    warmup_steps: int = 200
+    max_grad_norm: float = 0.3
     lr_scheduler_type: str = "cosine"
     fp16: bool = False
     bf16: bool = True

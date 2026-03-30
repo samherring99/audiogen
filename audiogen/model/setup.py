@@ -36,10 +36,11 @@ def expand_for_audio(
     tokenizer, meta = expand_tokenizer(tokenizer, codec, num_codebooks, codebook_size)
     resize_model_embeddings(model, tokenizer)
 
-    # Zero-init new embeddings — more stable than multivariate normal init
+    # Small random init for new tokens — zero causes instability on the lm_head side
     with torch.no_grad():
-        model.model.embed_tokens.weight[old_vocab_size:] = 0
-        model.lm_head.weight[old_vocab_size:] = 0
+        std = model.model.embed_tokens.weight[:old_vocab_size].std().item()
+        model.model.embed_tokens.weight[old_vocab_size:].normal_(mean=0, std=std * 0.01)
+        model.lm_head.weight[old_vocab_size:].normal_(mean=0, std=std * 0.01)
 
     if save_dir is not None:
         save_dir = Path(save_dir)
