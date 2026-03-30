@@ -17,7 +17,7 @@ def main():
     parser.add_argument("--grad_accum", type=int, default=4)
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--warmup_steps", type=int, default=500)
-    parser.add_argument("--no_fp16", action="store_true")
+    parser.add_argument("--no_bf16", action="store_true")
     args = parser.parse_args()
 
     config = SFTConfig(
@@ -33,7 +33,8 @@ def main():
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
         warmup_steps=args.warmup_steps,
-        fp16=not args.no_fp16,
+        fp16=False,
+        bf16=not args.no_bf16,
     )
     run_sft(config)
 

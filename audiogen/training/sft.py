@@ -36,8 +36,9 @@ class SFTConfig:
     weight_decay: float = 0.01
     warmup_steps: int = 500
     lr_scheduler_type: str = "cosine"
-    fp16: bool = True
-    gradient_checkpointing: bool = True
+    fp16: bool = False
+    bf16: bool = True
+    gradient_checkpointing: bool = False
 
     # Logging
     logging_steps: int = 50
@@ -82,6 +83,7 @@ def run_sft(config: SFTConfig) -> None:
         warmup_steps=config.warmup_steps,
         lr_scheduler_type=config.lr_scheduler_type,
         fp16=config.fp16,
+        bf16=config.bf16,
         gradient_checkpointing=config.gradient_checkpointing,
         logging_steps=config.logging_steps,
         eval_strategy="steps",
