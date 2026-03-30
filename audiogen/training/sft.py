@@ -84,7 +84,7 @@ def run_sft(config: SFTConfig) -> None:
         fp16=config.fp16,
         gradient_checkpointing=config.gradient_checkpointing,
         logging_steps=config.logging_steps,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=config.eval_steps,
         save_steps=config.save_steps,
         save_total_limit=config.save_total_limit,
