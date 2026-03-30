@@ -85,12 +85,13 @@ class MOSSCodec(CodecBase):
         audio = self._prepare(waveform)
         with torch.no_grad():
             output = self._model.encode(audio, num_quantizers=self._num_codebooks)
-        codes = output.audio_codes[0]  # (num_codebooks, num_frames)
-        return MOSSOutput(codes=codes.cpu(), num_frames=codes.shape[1], num_codebooks=self._num_codebooks)
+        # audio_codes shape: (num_codebooks, batch, num_frames) -> squeeze batch -> (num_codebooks, num_frames)
+        codes = output.audio_codes[:, 0, :]
+        return MOSSOutput(codes=codes.cpu(), num_frames=codes.shape[1], num_codebooks=codes.shape[0])
 
     def decode(self, output: MOSSOutput) -> torch.Tensor:
-        # codes: (num_codebooks, num_frames) -> (1, num_codebooks, num_frames)
-        codes = output.codes.unsqueeze(0).to(self._device)
+        # model expects (num_codebooks, batch, num_frames)
+        codes = output.codes.unsqueeze(1).to(self._device)
         with torch.no_grad():
             audio = self._model.decode(codes)
         return audio.squeeze(0).cpu()  # (1, samples)
