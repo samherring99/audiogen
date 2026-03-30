@@ -41,7 +41,8 @@ def main():
     total = 0
     all_records = []
     for tar_path in tqdm(tar_files, desc="Tars"):
-        records = process_tar(tar_path, codec, args.min_duration, args.max_duration)
+        remaining = (args.max_samples - total) if args.max_samples else None
+        records = process_tar(tar_path, codec, args.min_duration, args.max_duration, max_samples=remaining)
         all_records.extend(records)
         total += len(records)
         if args.max_samples and total >= args.max_samples:

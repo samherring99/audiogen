@@ -53,6 +53,7 @@ def process_tar(
     codec: CodecBase,
     min_duration_s: float = 1.0,
     max_duration_s: float = 30.0,
+    max_samples: int | None = None,
 ) -> list[AudioRecord]:
     records = []
     tar_name = Path(tar_path).name
@@ -93,6 +94,7 @@ def process_tar(
             continue
 
         stats["ok"] += 1
+        print(f"OK: {source_id} ({duration_s:.1f}s, {output.num_frames} frames)", file=sys.stderr)
         records.append(
             AudioRecord(
                 prompt=f"Generate speech audio: {transcript}",
@@ -105,6 +107,8 @@ def process_tar(
                 duration=round(duration_s, 2),
             )
         )
+        if max_samples and stats["ok"] >= max_samples:
+            break
 
     if stats["found"] > 0:
         print(
