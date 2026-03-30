@@ -12,7 +12,8 @@ from audiogen.data.sources.tar_source import process_tar
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tar_dir", required=True)
+    parser.add_argument("--tar_dir", default=None)
+    parser.add_argument("--tar_file", default=None, help="Single tar file to process (overrides --tar_dir)")
     parser.add_argument("--output", default="encoded_dataset.jsonl")
     parser.add_argument("--num_codebooks", type=int, default=8)
     parser.add_argument("--model_path", default=None, help="Local path or HF repo for MOSS")
@@ -27,9 +28,14 @@ def main():
     dtype = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}[args.dtype] if args.dtype else None
     codec = load_codec("moss", model_path=args.model_path, device=args.device, num_codebooks=args.num_codebooks, dtype=dtype)
 
-    tar_files = sorted(Path(args.tar_dir).glob("**/*.tar"))
-    if not tar_files:
-        tar_files = sorted(Path(args.tar_dir).glob("**/*.tar.gz"))
+    if args.tar_file:
+        tar_files = [Path(args.tar_file)]
+    elif args.tar_dir:
+        tar_files = sorted(Path(args.tar_dir).glob("**/*.tar"))
+        if not tar_files:
+            tar_files = sorted(Path(args.tar_dir).glob("**/*.tar.gz"))
+    else:
+        raise ValueError("Must provide either --tar_dir or --tar_file")
     print(f"Found {len(tar_files)} tar files")
 
     total = 0
