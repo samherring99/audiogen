@@ -6,6 +6,9 @@ import tarfile
 from pathlib import Path
 from typing import Iterator
 
+import os
+os.environ.setdefault("TORCHAUDIO_USE_BACKEND_DISPATCHER", "1")
+
 import torch
 import torchaudio
 
@@ -58,7 +61,12 @@ def process_tar(
     for audio_bytes, transcript, source_id in iter_tar_examples(tar_path):
         stats["found"] += 1
         try:
-            waveform, orig_sr = torchaudio.load(io.BytesIO(audio_bytes))
+            import numpy as np
+            import librosa
+            audio_np, orig_sr = librosa.load(io.BytesIO(audio_bytes), sr=None, mono=False)
+            if audio_np.ndim == 1:
+                audio_np = audio_np[np.newaxis, :]  # (1, samples)
+            waveform = torch.from_numpy(audio_np)
         except Exception as e:
             print(f"Warning: audio load failed for {source_id}: {e}", file=sys.stderr)
             stats["load_fail"] += 1
