@@ -30,10 +30,11 @@ class MOSSOutput(CodecOutput):
 
 
 class MOSSCodec(CodecBase):
-    def __init__(self, model, device: torch.device, n_codebooks: int = 8):
+    def __init__(self, model, device: torch.device, n_codebooks: int = 8, dtype: torch.dtype = torch.bfloat16):
         self._model = model
         self._device = device
         self._num_codebooks = n_codebooks
+        self._dtype = dtype
 
     @property
     def sample_rate(self) -> int:
@@ -70,7 +71,7 @@ class MOSSCodec(CodecBase):
         model = AutoModel.from_pretrained(
             path, trust_remote_code=True, torch_dtype=load_dtype
         ).to(dtype=load_dtype).eval().to(device)
-        return cls(model, torch.device(device), n_codebooks=num_codebooks)
+        return cls(model, torch.device(device), n_codebooks=num_codebooks, dtype=load_dtype)
 
     def _prepare(self, waveform: torch.Tensor) -> torch.Tensor:
         """Ensure mono, shape (1, 1, samples), matched to model device/dtype."""
@@ -78,8 +79,7 @@ class MOSSCodec(CodecBase):
             waveform = waveform.unsqueeze(0)
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
-        model_dtype = next(self._model.parameters()).dtype
-        return waveform.unsqueeze(0).to(device=self._device, dtype=model_dtype)
+        return waveform.unsqueeze(0).to(device=self._device, dtype=self._dtype)
 
     def encode(self, waveform: torch.Tensor) -> MOSSOutput:
         audio = self._prepare(waveform)
