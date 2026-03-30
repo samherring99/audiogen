@@ -69,7 +69,7 @@ class MOSSCodec(CodecBase):
             load_dtype = torch.bfloat16
         model = AutoModel.from_pretrained(
             path, trust_remote_code=True, torch_dtype=load_dtype
-        ).eval().to(device)
+        ).to(dtype=load_dtype).eval().to(device)
         return cls(model, torch.device(device), n_codebooks=num_codebooks)
 
     def _prepare(self, waveform: torch.Tensor) -> torch.Tensor:

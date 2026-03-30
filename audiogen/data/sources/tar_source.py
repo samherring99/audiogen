@@ -66,7 +66,7 @@ def process_tar(
             audio_np, orig_sr = librosa.load(io.BytesIO(audio_bytes), sr=None, mono=False)
             if audio_np.ndim == 1:
                 audio_np = audio_np[np.newaxis, :]  # (1, samples)
-            waveform = torch.from_numpy(audio_np)
+            waveform = torch.from_numpy(audio_np).float()  # always float32 here; codec._prepare casts to model dtype
         except Exception as e:
             print(f"Warning: audio load failed for {source_id}: {e}", file=sys.stderr)
             stats["load_fail"] += 1
