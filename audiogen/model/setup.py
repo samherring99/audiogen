@@ -32,8 +32,14 @@ def expand_for_audio(
     save_dir: str | Path | None = None,
 ) -> tuple[object, object, TokenMetadata]:
     # Expand the tokenizer vocab with audio tokens and resize model embeddings.
+    old_vocab_size = len(tokenizer)
     tokenizer, meta = expand_tokenizer(tokenizer, codec, num_codebooks, codebook_size)
     resize_model_embeddings(model, tokenizer)
+
+    # Zero-init new embeddings — more stable than multivariate normal init
+    with torch.no_grad():
+        model.model.embed_tokens.weight[old_vocab_size:] = 0
+        model.lm_head.weight[old_vocab_size:] = 0
 
     if save_dir is not None:
         save_dir = Path(save_dir)

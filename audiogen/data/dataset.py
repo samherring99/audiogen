@@ -69,7 +69,12 @@ class AudioGenerationDataset(Dataset):
             labels[: audio_positions[0] + 1] = -100
 
         # Mask padding
-        labels[labels == self.tokenizer.pad_token_id] = -100
+        if self.tokenizer.pad_token_id is not None:
+            labels[labels == self.tokenizer.pad_token_id] = -100
+
+        # Sanity check — if no labels are valid, something is wrong
+        if (labels != -100).sum() == 0:
+            print(f"Warning: sample {idx} has no valid label tokens!", flush=True)
 
         return {
             "input_ids": input_ids,

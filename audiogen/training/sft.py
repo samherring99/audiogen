@@ -32,9 +32,10 @@ class SFTConfig:
     per_device_train_batch_size: int = 4
     per_device_eval_batch_size: int = 4
     gradient_accumulation_steps: int = 4
-    learning_rate: float = 5e-5
+    learning_rate: float = 1e-4
     weight_decay: float = 0.01
-    warmup_steps: int = 500
+    warmup_steps: int = 100
+    max_grad_norm: float = 1.0
     lr_scheduler_type: str = "cosine"
     fp16: bool = False
     bf16: bool = True
@@ -84,13 +85,14 @@ def run_sft(config: SFTConfig) -> None:
         lr_scheduler_type=config.lr_scheduler_type,
         fp16=config.fp16,
         bf16=config.bf16,
+        max_grad_norm=config.max_grad_norm,
         gradient_checkpointing=config.gradient_checkpointing,
         logging_steps=config.logging_steps,
         eval_strategy="steps",
         eval_steps=config.eval_steps,
         save_steps=config.save_steps,
         save_total_limit=config.save_total_limit,
-        report_to="none",
+        report_to="wandb",
     )
 
     trainer = Trainer(
