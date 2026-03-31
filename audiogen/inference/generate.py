@@ -72,11 +72,13 @@ def decode_token_ids(
     metadata: TokenMetadata,
 ) -> CodecOutput | None:
     text = tokenizer.decode(token_ids, skip_special_tokens=False)
+    print(f"[debug] generated text ({len(token_ids)} tokens): {repr(text[:300])}")
     try:
         flat_tokens, num_frames = formatter.string_to_flat_tokens(text)
     except Exception as e:
         print(f"Warning: token parsing failed: {e}")
         return None
+    print(f"[debug] parsed {len(flat_tokens)} flat tokens, {num_frames} frames")
 
     if metadata.codec == "snac":
         from audiogen.codecs.snac import SNACOutput
