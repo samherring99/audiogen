@@ -25,6 +25,14 @@ def generate_token_ids(
     formatter = get_formatter(metadata.codec, metadata.num_codebooks)
     messages = formatter.format_chat_messages(prompt, output=None)
 
+    # If the saved tokenizer lost its chat template (happens when add_special_tokens clears it),
+    # fall back to loading it from the original Qwen instruct model.
+    if tokenizer.chat_template is None:
+        from transformers import AutoTokenizer as _AT
+        _base = _AT.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+        tokenizer.chat_template = _base.chat_template
+        print("Warning: tokenizer.chat_template was None — loaded from Qwen/Qwen2.5-0.5B-Instruct")
+
     # Apply chat template and add the opening <audio> tag to prime generation
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     text += "<audio>"

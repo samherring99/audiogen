@@ -33,10 +33,10 @@ def expand_for_audio(
 ) -> tuple[object, object, TokenMetadata]:
     # Expand the tokenizer vocab with audio tokens and resize model embeddings.
     old_vocab_size = len(tokenizer)
-    # Preserve chat template before expand_tokenizer potentially clears it
+    # Preserve chat template — add_special_tokens can clear it in some transformers versions
     chat_template = getattr(tokenizer, "chat_template", None)
     tokenizer, meta = expand_tokenizer(tokenizer, codec, num_codebooks, codebook_size)
-    if chat_template is not None and tokenizer.chat_template is None:
+    if chat_template:
         tokenizer.chat_template = chat_template
     resize_model_embeddings(model, tokenizer)
 
