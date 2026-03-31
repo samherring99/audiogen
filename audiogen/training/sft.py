@@ -44,6 +44,7 @@ class SFTConfig:
     # Resume / fine-tuning
     resume_from_checkpoint: str | None = None  # path to checkpoint dir to resume from
     unfreeze_all: bool = False  # if True, train all params (not just embeddings)
+    unfreeze_last_n_layers: int = 0  # if > 0, unfreeze last N transformer layers + embeddings
 
     # Logging
     logging_steps: int = 50
@@ -78,6 +79,21 @@ def run_sft(config: SFTConfig) -> None:
         for param in model.parameters():
             param.requires_grad = True
         print("All parameters unfrozen.")
+    elif config.unfreeze_last_n_layers > 0:
+        # Freeze everything, then selectively unfreeze last N layers + embeddings
+        for param in model.parameters():
+            param.requires_grad = False
+        n = config.unfreeze_last_n_layers
+        total_layers = model.config.num_hidden_layers
+        unfreeze_from = total_layers - n
+        for name, param in model.named_parameters():
+            if "embed_tokens" in name or "lm_head" in name or "model.norm" in name:
+                param.requires_grad = True
+            elif "model.layers." in name:
+                layer_idx = int(name.split("model.layers.")[1].split(".")[0])
+                if layer_idx >= unfreeze_from:
+                    param.requires_grad = True
+        print(f"Unfreezing last {n} layers (layers {unfreeze_from}-{total_layers-1}) + embeddings.")
     else:
         # Freeze all base model weights — only train the new audio token embeddings
         for name, param in model.named_parameters():
@@ -132,7 +148,7 @@ def run_sft(config: SFTConfig) -> None:
         data_collator=collator,
     )
     # Only pass resume_from_checkpoint to trainer.train() when NOT switching trainable params.
-    # When unfreeze_all is set, model weights are already loaded — start fresh optimizer state.
-    resume = None if config.unfreeze_all else config.resume_from_checkpoint
+    # When changing which params are trainable, start fresh optimizer state.
+    resume = None if (config.unfreeze_all or config.unfreeze_last_n_layers > 0) else config.resume_from_checkpoint
     trainer.train(resume_from_checkpoint=resume)
     trainer.save_model(str(output_dir))

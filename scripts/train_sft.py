@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--no_bf16", action="store_true")
     parser.add_argument("--resume_from_checkpoint", default=None, help="Path to checkpoint to resume from")
     parser.add_argument("--unfreeze_all", action="store_true", help="Train all parameters, not just embeddings")
+    parser.add_argument("--unfreeze_last_n_layers", type=int, default=0, help="Unfreeze last N transformer layers + embeddings")
     args = parser.parse_args()
 
     config = SFTConfig(
@@ -39,6 +40,7 @@ def main():
         bf16=not args.no_bf16,
         resume_from_checkpoint=args.resume_from_checkpoint,
         unfreeze_all=args.unfreeze_all,
+        unfreeze_last_n_layers=args.unfreeze_last_n_layers,
     )
     run_sft(config)
 
