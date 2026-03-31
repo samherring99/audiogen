@@ -32,10 +32,10 @@ class SFTConfig:
     per_device_train_batch_size: int = 4
     per_device_eval_batch_size: int = 4
     gradient_accumulation_steps: int = 4
-    learning_rate: float = 1e-5
+    learning_rate: float = 2e-6
     weight_decay: float = 0.01
-    warmup_steps: int = 200
-    max_grad_norm: float = 0.3
+    warmup_steps: int = 500
+    max_grad_norm: float = 0.1
     lr_scheduler_type: str = "cosine"
     fp16: bool = False
     bf16: bool = True
@@ -60,6 +60,17 @@ def run_sft(config: SFTConfig) -> None:
         codebook_size=config.codebook_size,
         save_dir=output_dir,
     )
+
+    # Freeze all base model weights — only train the new audio token embeddings
+    for name, param in model.named_parameters():
+        param.requires_grad = False
+    for name, param in model.named_parameters():
+        if "embed_tokens" in name or "lm_head" in name:
+            param.requires_grad = True
+
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
+    print(f"Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.1f}%)")
 
     records = load_records(config.data_path)
     train_records, val_records = split_records(records, val_split=config.val_split)
