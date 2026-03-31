@@ -38,15 +38,18 @@ def generate_token_ids(
     text += "<audio>"
 
     print(f"[debug] prompt text: {repr(text[:200])}")
-    # Tokenize prefix and audio start token separately to avoid special token filtering issues
-    prefix_ids = tokenizer(text[:-len("<audio>")], return_tensors="pt", add_special_tokens=False)["input_ids"]
-    audio_start_id = torch.tensor([[metadata.audio_start_token_id]], dtype=torch.long)
-    input_ids = torch.cat([prefix_ids, audio_start_id], dim=1).to(device)
+    # Use encode directly — some saved tokenizers fail with __call__ but encode works
+    prefix_text = text[:-len("<audio>")]
+    prefix_ids = tokenizer.encode(prefix_text, add_special_tokens=False)
+    print(f"[debug] prefix token count: {len(prefix_ids)}")
+    assert len(prefix_ids) > 0, f"Prefix tokenized to empty. Check tokenizer. Text: {repr(prefix_text[:100])}"
+    audio_start_id = metadata.audio_start_token_id
+    all_ids = prefix_ids + [audio_start_id]
+    input_ids = torch.tensor([all_ids], dtype=torch.long).to(device)
     attention_mask = torch.ones_like(input_ids)
     inputs = {"input_ids": input_ids, "attention_mask": attention_mask}
-    print(f"[debug] input_ids shape: {input_ids.shape}, audio_start_id: {metadata.audio_start_token_id}")
+    print(f"[debug] input_ids shape: {input_ids.shape}")
     input_len = input_ids.shape[1]
-    assert input_len > 0, "Tokenizer returned empty input_ids — check tokenizer config"
 
     with torch.no_grad():
         outputs = model.generate(
