@@ -54,12 +54,32 @@ def expand_for_audio(
     return model, tokenizer, meta
 
 
-def load_trained_model(model_path: str | Path, device: str = "cpu"):
+def load_trained_model(model_path: str | Path, base_model: str | None = None, device: str = "cpu"):
     model_path = Path(model_path)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    meta = load_token_metadata(model_path / "audio_token_metadata.json")
+
+    # Rebuild tokenizer from base model and re-expand — saved tokenizers after add_tokens
+    # can produce broken fast tokenizer files that encode everything to empty.
+    if base_model is None:
+        # Try to infer base model from saved config
+        import json
+        cfg_path = model_path / "config.json"
+        try:
+            cfg = json.loads(cfg_path.read_text())
+            base_model = cfg.get("_name_or_path", "Qwen/Qwen2.5-0.5B-Instruct")
+        except Exception:
+            base_model = "Qwen/Qwen2.5-0.5B-Instruct"
+        # Strip checkpoint suffix if base model path points to a fine-tuned dir
+        if "/" not in base_model and not Path(base_model).exists():
+            base_model = "Qwen/Qwen2.5-0.5B-Instruct"
+    print(f"Rebuilding tokenizer from base: {base_model}")
+    tokenizer = AutoTokenizer.from_pretrained(base_model)
+    tokenizer, _ = expand_tokenizer(
+        tokenizer, meta.codec, meta.num_codebooks, meta.codebook_size
+    )
+
     model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16)
     model = model.to(device).eval()
-    meta = load_token_metadata(model_path / "audio_token_metadata.json")
     return model, tokenizer, meta
 
 
