@@ -79,6 +79,9 @@ def decode_token_ids(
         print(f"Warning: token parsing failed: {e}")
         return None
     print(f"[debug] parsed {len(flat_tokens)} flat tokens, {num_frames} frames")
+    if num_frames == 0:
+        print("Warning: no audio tokens found in generated output — model may need more training")
+        return None
 
     if metadata.codec == "snac":
         from audiogen.codecs.snac import SNACOutput

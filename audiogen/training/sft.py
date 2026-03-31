@@ -60,6 +60,10 @@ def run_sft(config: SFTConfig) -> None:
         # Load from an already-expanded checkpoint (tokenizer + audio_token_metadata already saved there)
         print(f"Resuming from checkpoint: {config.resume_from_checkpoint}")
         model, tokenizer, meta = load_trained_model(config.resume_from_checkpoint)
+        # Save tokenizer + metadata to new output dir so inference works from there
+        from audiogen.tokens.vocab import save_token_metadata
+        tokenizer.save_pretrained(output_dir)
+        save_token_metadata(meta, output_dir / "audio_token_metadata.json")
     else:
         model, tokenizer = load_base_model(config.base_model)
         model, tokenizer, meta = expand_for_audio(
@@ -127,5 +131,8 @@ def run_sft(config: SFTConfig) -> None:
         eval_dataset=val_dataset,
         data_collator=collator,
     )
-    trainer.train(resume_from_checkpoint=config.resume_from_checkpoint)
+    # Only pass resume_from_checkpoint to trainer.train() when NOT switching trainable params.
+    # When unfreeze_all is set, model weights are already loaded — start fresh optimizer state.
+    resume = None if config.unfreeze_all else config.resume_from_checkpoint
+    trainer.train(resume_from_checkpoint=resume)
     trainer.save_model(str(output_dir))
