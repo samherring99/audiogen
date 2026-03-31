@@ -37,8 +37,11 @@ def generate_token_ids(
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     text += "<audio>"
 
+    print(f"[debug] prompt text: {repr(text[:200])}")
     inputs = tokenizer(text, return_tensors="pt").to(device)
+    print(f"[debug] input_ids shape: {inputs['input_ids'].shape}")
     input_len = inputs["input_ids"].shape[1]
+    assert input_len > 0, "Tokenizer returned empty input_ids — check tokenizer config"
 
     with torch.no_grad():
         outputs = model.generate(
