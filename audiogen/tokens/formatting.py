@@ -82,11 +82,12 @@ class MOSSTokenFormatter(TokenFormatter):
     def string_to_flat_tokens(self, text: str) -> tuple[list[int], int]:
         text = text.replace("<audio>", "").replace("</audio>", "")
         cb = self.num_codebooks
-        # Build pattern matching any codebook token
         pattern = re.compile(r"\[A(\d+)_(\d+)\]")
         matches = pattern.findall(text)
         flat = [int(v) for _, v in matches]
+        # Truncate to nearest complete frame
         num_frames = len(flat) // cb if cb > 0 else 0
+        flat = flat[:num_frames * cb]
         return flat, num_frames
 
 
