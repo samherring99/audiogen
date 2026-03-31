@@ -18,6 +18,8 @@ def main():
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--warmup_steps", type=int, default=500)
     parser.add_argument("--no_bf16", action="store_true")
+    parser.add_argument("--resume_from_checkpoint", default=None, help="Path to checkpoint to resume from")
+    parser.add_argument("--unfreeze_all", action="store_true", help="Train all parameters, not just embeddings")
     args = parser.parse_args()
 
     config = SFTConfig(
@@ -35,6 +37,8 @@ def main():
         warmup_steps=args.warmup_steps,
         fp16=False,
         bf16=not args.no_bf16,
+        resume_from_checkpoint=args.resume_from_checkpoint,
+        unfreeze_all=args.unfreeze_all,
     )
     run_sft(config)
 

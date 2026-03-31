@@ -5,7 +5,7 @@ from pathlib import Path
 
 from audiogen.data.dataset import AudioDataCollator, AudioGenerationDataset
 from audiogen.data.io import load_records, split_records, save_records_jsonl
-from audiogen.model.setup import expand_for_audio, load_base_model
+from audiogen.model.setup import expand_for_audio, load_base_model, load_trained_model
 from audiogen.tokens.vocab import TokenMetadata
 
 from transformers import Trainer, TrainingArguments
@@ -41,6 +41,10 @@ class SFTConfig:
     bf16: bool = True
     gradient_checkpointing: bool = False
 
+    # Resume / fine-tuning
+    resume_from_checkpoint: str | None = None  # path to checkpoint dir to resume from
+    unfreeze_all: bool = False  # if True, train all params (not just embeddings)
+
     # Logging
     logging_steps: int = 50
     eval_steps: int = 500
@@ -52,21 +56,31 @@ def run_sft(config: SFTConfig) -> None:
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model, tokenizer = load_base_model(config.base_model)
-    model, tokenizer, meta = expand_for_audio(
-        model, tokenizer,
-        codec=config.codec,
-        num_codebooks=config.num_codebooks,
-        codebook_size=config.codebook_size,
-        save_dir=output_dir,
-    )
+    if config.resume_from_checkpoint is not None:
+        # Load from an already-expanded checkpoint (tokenizer + audio_token_metadata already saved there)
+        print(f"Resuming from checkpoint: {config.resume_from_checkpoint}")
+        model, tokenizer, meta = load_trained_model(config.resume_from_checkpoint)
+    else:
+        model, tokenizer = load_base_model(config.base_model)
+        model, tokenizer, meta = expand_for_audio(
+            model, tokenizer,
+            codec=config.codec,
+            num_codebooks=config.num_codebooks,
+            codebook_size=config.codebook_size,
+            save_dir=output_dir,
+        )
 
-    # Freeze all base model weights — only train the new audio token embeddings
-    for name, param in model.named_parameters():
-        param.requires_grad = False
-    for name, param in model.named_parameters():
-        if "embed_tokens" in name or "lm_head" in name:
+    if config.unfreeze_all:
+        for param in model.parameters():
             param.requires_grad = True
+        print("All parameters unfrozen.")
+    else:
+        # Freeze all base model weights — only train the new audio token embeddings
+        for name, param in model.named_parameters():
+            param.requires_grad = False
+        for name, param in model.named_parameters():
+            if "embed_tokens" in name or "lm_head" in name:
+                param.requires_grad = True
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
@@ -113,5 +127,5 @@ def run_sft(config: SFTConfig) -> None:
         eval_dataset=val_dataset,
         data_collator=collator,
     )
-    trainer.train()
+    trainer.train(resume_from_checkpoint=config.resume_from_checkpoint)
     trainer.save_model(str(output_dir))
