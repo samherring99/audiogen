@@ -64,10 +64,8 @@ class MOSSCodec(CodecBase):
         # which can trigger recompilation issues on mismatched CUDA architectures.
         if dtype is not None:
             load_dtype = dtype
-        elif device == "cpu":
-            load_dtype = torch.float32  # CPU doesn't support float16/bfloat16 ops for this model
         else:
-            load_dtype = torch.bfloat16
+            load_dtype = torch.float32  # bfloat16 causes internal dtype mismatch in MOSS decode
         model = AutoModel.from_pretrained(
             path, trust_remote_code=True, torch_dtype=load_dtype
         ).to(dtype=load_dtype).eval().to(device)
