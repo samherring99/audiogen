@@ -56,7 +56,7 @@ def expand_for_audio(
 
 def load_trained_model(model_path: str | Path, device: str = "cpu"):
     model_path = Path(model_path)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
     model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.float16)
     model = model.to(device).eval()
     meta = load_token_metadata(model_path / "audio_token_metadata.json")
