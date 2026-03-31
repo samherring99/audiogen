@@ -91,7 +91,7 @@ class MOSSCodec(CodecBase):
 
     def decode(self, output: MOSSOutput) -> torch.Tensor:
         # model expects (num_codebooks, batch, num_frames)
-        codes = output.codes.unsqueeze(1).to(self._device)
+        codes = output.codes.long().unsqueeze(1).to(self._device)
         with torch.no_grad():
             audio = self._model.decode(codes)
         return audio.squeeze(0).cpu()  # (1, samples)
