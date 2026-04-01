@@ -36,7 +36,7 @@ class SFTConfig:
     weight_decay: float = 0.01
     warmup_steps: int = 500
     max_grad_norm: float = 0.1
-    lr_scheduler_type: str = "constant_with_warmup"
+    lr_scheduler_type: str = "cosine"
     fp16: bool = False
     bf16: bool = True
     gradient_checkpointing: bool = False
