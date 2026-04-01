@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import torch
-import torchaudio
+import soundfile as sf
+import numpy as np
 
 from audiogen.codecs.base import CodecBase, CodecOutput
 from audiogen.tokens.formatting import TokenFormatter
@@ -128,6 +129,7 @@ def generate_audio(
     if output_path is not None:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        torchaudio.save(str(output_path), waveform, codec.sample_rate)
+        audio_np = waveform.numpy().T  # (samples, channels)
+        sf.write(str(output_path), audio_np, codec.sample_rate)
 
     return waveform

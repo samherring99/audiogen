@@ -92,10 +92,5 @@ class MOSSCodec(CodecBase):
         codes = output.codes.long().unsqueeze(1).to(self._device)
         with torch.no_grad():
             result = self._model.decode(codes)
-        # result is a MossAudioTokenizerDecoderOutput dataclass — print attrs once to find the right field
-        if not isinstance(result, torch.Tensor):
-            print(f"[debug decode] result type: {type(result)}, attrs: {[a for a in dir(result) if not a.startswith('_')]}")
-            audio = result.audio_values if hasattr(result, "audio_values") else list(vars(result).values())[0]
-        else:
-            audio = result
+        audio = result.audio if hasattr(result, "audio") else result
         return audio.squeeze(0).cpu()  # (1, samples)
