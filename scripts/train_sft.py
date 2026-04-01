@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--warmup_steps", type=int, default=500)
     parser.add_argument("--no_bf16", action="store_true")
+    parser.add_argument("--max_grad_norm", type=float, default=0.1)
     parser.add_argument("--resume_from_checkpoint", default=None, help="Path to checkpoint to resume from")
     parser.add_argument("--unfreeze_all", action="store_true", help="Train all parameters, not just embeddings")
     parser.add_argument("--unfreeze_last_n_layers", type=int, default=0, help="Unfreeze last N transformer layers + embeddings")
@@ -41,6 +42,7 @@ def main():
         resume_from_checkpoint=args.resume_from_checkpoint,
         unfreeze_all=args.unfreeze_all,
         unfreeze_last_n_layers=args.unfreeze_last_n_layers,
+        max_grad_norm=args.max_grad_norm,
     )
     run_sft(config)
 
