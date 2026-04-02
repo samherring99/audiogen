@@ -16,11 +16,16 @@ from audiogen.codecs.base import CodecBase
 from audiogen.data.schema import AudioRecord
 
 
-def iter_tar_examples(tar_path: str | Path) -> Iterator[tuple[bytes, str, str]]:
+def iter_tar_examples(
+    tar_path: str | Path,
+    language: str | None = None,
+) -> Iterator[tuple[bytes, str, str]]:
     """
     Yield (audio_bytes, transcript, source_id) from a Common Voice tar file.
     Expects files named: <id>.audio.mp3, <id>.sentence.txt, <id>.metadata.json
+    If language is set (e.g. "en"), skip samples whose metadata locale doesn't match.
     """
+    import json as _json
     try:
         with tarfile.open(str(tar_path), "r:*") as tar:
             members = {m.name: m for m in tar.getmembers() if m.isfile()}
@@ -34,11 +39,20 @@ def iter_tar_examples(tar_path: str | Path) -> Iterator[tuple[bytes, str, str]]:
                 elif fname.endswith(".sentence.txt"):
                     base = fname[: -len(".sentence.txt")]
                     ids.setdefault(base, {})["txt"] = name
+                elif fname.endswith(".metadata.json"):
+                    base = fname[: -len(".metadata.json")]
+                    ids.setdefault(base, {})["meta"] = name
 
             for base_id, files in ids.items():
                 if "mp3" not in files or "txt" not in files:
                     continue
                 try:
+                    if language is not None and "meta" in files:
+                        meta_bytes = tar.extractfile(members[files["meta"]]).read()
+                        meta = _json.loads(meta_bytes.decode("utf-8"))
+                        locale = meta.get("locale", meta.get("language", ""))
+                        if not locale.startswith(language):
+                            continue
                     audio_bytes = tar.extractfile(members[files["mp3"]]).read()
                     transcript = tar.extractfile(members[files["txt"]]).read().decode("utf-8").strip()
                     yield audio_bytes, transcript, base_id
@@ -54,12 +68,13 @@ def process_tar(
     min_duration_s: float = 1.0,
     max_duration_s: float = 30.0,
     max_samples: int | None = None,
+    language: str | None = None,
 ) -> list[AudioRecord]:
     records = []
     tar_name = Path(tar_path).name
-    stats = {"found": 0, "load_fail": 0, "too_short": 0, "too_long": 0, "encode_fail": 0, "ok": 0}
+    stats = {"found": 0, "load_fail": 0, "too_short": 0, "too_long": 0, "encode_fail": 0, "ok": 0, "wrong_language": 0}
 
-    for audio_bytes, transcript, source_id in iter_tar_examples(tar_path):
+    for audio_bytes, transcript, source_id in iter_tar_examples(tar_path, language=language):
         stats["found"] += 1
         try:
             import numpy as np
@@ -117,5 +132,7 @@ def process_tar(
             f"load_fail={stats['load_fail']} encode_fail={stats['encode_fail']}",
             file=sys.stderr,
         )
+    elif language is not None:
+        print(f"{tar_name}: 0 samples found for language={language!r} — metadata may be missing or use different locale keys", file=sys.stderr)
 
     return records

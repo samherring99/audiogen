@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--min_duration", type=float, default=1.0)
     parser.add_argument("--max_duration", type=float, default=30.0)
     parser.add_argument("--max_samples", type=int, default=None)
+    parser.add_argument("--language", default=None, help="Filter by language code, e.g. 'en'")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", default=None, choices=["float32", "float16", "bfloat16"],
                         help="Model dtype. Defaults to float32 on CPU, bfloat16 on CUDA.")
@@ -42,7 +43,7 @@ def main():
     all_records = []
     for tar_path in tqdm(tar_files, desc="Tars"):
         remaining = (args.max_samples - total) if args.max_samples else None
-        records = process_tar(tar_path, codec, args.min_duration, args.max_duration, max_samples=remaining)
+        records = process_tar(tar_path, codec, args.min_duration, args.max_duration, max_samples=remaining, language=args.language)
         all_records.extend(records)
         total += len(records)
         if args.max_samples and total >= args.max_samples:
