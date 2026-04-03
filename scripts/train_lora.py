@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--lora_alpha", type=int, default=32)
     parser.add_argument("--no_bf16", action="store_true")
     parser.add_argument("--resume_from_checkpoint", default=None)
+    parser.add_argument("--freeze_embeddings", action="store_true", help="Keep embed_tokens and lm_head frozen (use when resuming from a trained checkpoint)")
     args = parser.parse_args()
 
     config = LoRAConfig(
@@ -43,6 +44,7 @@ def main():
         fp16=False,
         bf16=not args.no_bf16,
         resume_from_checkpoint=args.resume_from_checkpoint,
+        freeze_embeddings=args.freeze_embeddings,
     )
     run_lora(config)
 

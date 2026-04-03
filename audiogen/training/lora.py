@@ -20,6 +20,7 @@ class LoRAConfig(SFTConfig):
     target_modules: list[str] = field(
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "gate_proj", "up_proj", "down_proj"]
     )
+    freeze_embeddings: bool = False
 
 
 def apply_lora(model, config: LoRAConfig):
@@ -35,10 +36,11 @@ def apply_lora(model, config: LoRAConfig):
     )
     model = get_peft_model(model, lora_cfg)
 
-    # Newly added audio token embeddings must be learned — unfreeze them
-    for name, param in model.named_parameters():
-        if "embed_tokens" in name or "lm_head" in name:
-            param.requires_grad = True
+    # Unfreeze embeddings only if freeze_embeddings is not set
+    if not config.freeze_embeddings:
+        for name, param in model.named_parameters():
+            if "embed_tokens" in name or "lm_head" in name:
+                param.requires_grad = True
 
     model.print_trainable_parameters()
     return model
