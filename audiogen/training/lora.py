@@ -103,24 +103,12 @@ def run_lora(config: LoRAConfig) -> None:
         report_to="wandb",
     )
 
-    # Use a lower LR for embeddings to prevent gradient explosion
-    embedding_lr = config.learning_rate * config.embedding_lr_scale
-    embedding_params = [p for n, p in model.named_parameters() if ("embed_tokens" in n or "lm_head" in n) and p.requires_grad]
-    lora_params = [p for n, p in model.named_parameters() if ("embed_tokens" not in n and "lm_head" not in n) and p.requires_grad]
-    optimizer = torch.optim.AdamW([
-        {"params": lora_params, "lr": config.learning_rate},
-        {"params": embedding_params, "lr": embedding_lr},
-    ], weight_decay=config.weight_decay)
-    print(f"LoRA params: {sum(p.numel() for p in lora_params):,} @ lr={config.learning_rate}")
-    print(f"Embedding params: {sum(p.numel() for p in embedding_params):,} @ lr={embedding_lr}")
-
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=collator,
-        optimizers=(optimizer, None),
     )
     trainer.train()
     trainer.save_model(str(output_dir))
