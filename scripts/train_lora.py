@@ -21,7 +21,8 @@ def main():
     parser.add_argument("--warmup_steps", type=int, default=500)
     parser.add_argument("--lora_r", type=int, default=16)
     parser.add_argument("--lora_alpha", type=int, default=32)
-    parser.add_argument("--no_fp16", action="store_true")
+    parser.add_argument("--no_bf16", action="store_true")
+    parser.add_argument("--resume_from_checkpoint", default=None)
     args = parser.parse_args()
 
     config = LoRAConfig(
@@ -39,7 +40,9 @@ def main():
         warmup_steps=args.warmup_steps,
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
-        fp16=not args.no_fp16,
+        fp16=False,
+        bf16=not args.no_bf16,
+        resume_from_checkpoint=args.resume_from_checkpoint,
     )
     run_lora(config)
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from audiogen.training.sft import SFTConfig
 from audiogen.data.dataset import AudioDataCollator, AudioGenerationDataset
 from audiogen.data.io import load_records, split_records, save_records_jsonl
-from audiogen.model.setup import expand_for_audio, load_base_model
+from audiogen.model.setup import expand_for_audio, load_base_model, load_trained_model
 from audiogen.tokens.vocab import save_token_metadata
 
 from transformers import Trainer, TrainingArguments
@@ -48,14 +48,21 @@ def run_lora(config: LoRAConfig) -> None:
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model, tokenizer = load_base_model(config.base_model)
-    model, tokenizer, meta = expand_for_audio(
-        model, tokenizer,
-        codec=config.codec,
-        num_codebooks=config.num_codebooks,
-        codebook_size=config.codebook_size,
-        save_dir=output_dir,
-    )
+    if config.resume_from_checkpoint is not None:
+        print(f"Loading from checkpoint: {config.resume_from_checkpoint}")
+        model, tokenizer, meta = load_trained_model(config.resume_from_checkpoint)
+        from audiogen.tokens.vocab import save_token_metadata
+        tokenizer.save_pretrained(output_dir)
+        save_token_metadata(meta, output_dir / "audio_token_metadata.json")
+    else:
+        model, tokenizer = load_base_model(config.base_model)
+        model, tokenizer, meta = expand_for_audio(
+            model, tokenizer,
+            codec=config.codec,
+            num_codebooks=config.num_codebooks,
+            codebook_size=config.codebook_size,
+            save_dir=output_dir,
+        )
     model = apply_lora(model, config)
 
     records = load_records(config.data_path)
@@ -81,13 +88,14 @@ def run_lora(config: LoRAConfig) -> None:
         warmup_steps=config.warmup_steps,
         lr_scheduler_type=config.lr_scheduler_type,
         fp16=config.fp16,
+        bf16=config.bf16,
         gradient_checkpointing=config.gradient_checkpointing,
         logging_steps=config.logging_steps,
         eval_strategy="steps",
         eval_steps=config.eval_steps,
         save_steps=config.save_steps,
         save_total_limit=config.save_total_limit,
-        report_to="none",
+        report_to="wandb",
     )
 
     trainer = Trainer(
