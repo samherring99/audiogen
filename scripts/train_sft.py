@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--warmup_steps", type=int, default=500)
     parser.add_argument("--no_bf16", action="store_true")
+    parser.add_argument("--lr_scheduler", default=None, help="Override lr_scheduler_type")
     parser.add_argument("--max_grad_norm", type=float, default=0.1)
     parser.add_argument("--resume_from_checkpoint", default=None, help="Path to checkpoint to resume from")
     parser.add_argument("--unfreeze_all", action="store_true", help="Train all parameters, not just embeddings")
@@ -43,6 +44,7 @@ def main():
         unfreeze_all=args.unfreeze_all,
         unfreeze_last_n_layers=args.unfreeze_last_n_layers,
         max_grad_norm=args.max_grad_norm,
+        **({'lr_scheduler_type': args.lr_scheduler} if args.lr_scheduler else {}),
     )
     run_sft(config)
 

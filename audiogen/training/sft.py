@@ -36,7 +36,7 @@ class SFTConfig:
     weight_decay: float = 0.01
     warmup_steps: int = 500
     max_grad_norm: float = 0.1
-    lr_scheduler_type: str = "cosine"
+    lr_scheduler_type: str = "constant_with_warmup"
     fp16: bool = False
     bf16: bool = True
     gradient_checkpointing: bool = False
@@ -147,8 +147,7 @@ def run_sft(config: SFTConfig) -> None:
         eval_dataset=val_dataset,
         data_collator=collator,
     )
-    # Only pass resume_from_checkpoint to trainer.train() when NOT switching trainable params.
-    # When changing which params are trainable, start fresh optimizer state.
-    resume = None if (config.unfreeze_all or config.unfreeze_last_n_layers > 0) else config.resume_from_checkpoint
-    trainer.train(resume_from_checkpoint=resume)
+    # Model weights are already loaded via load_trained_model — always start with fresh
+    # optimizer state to avoid parameter group mismatches from prior training phases.
+    trainer.train()
     trainer.save_model(str(output_dir))
