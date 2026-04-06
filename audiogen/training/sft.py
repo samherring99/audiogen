@@ -8,6 +8,7 @@ from audiogen.data.io import load_records, split_records, save_records_jsonl
 from audiogen.model.setup import expand_for_audio, load_base_model, load_trained_model
 from audiogen.tokens.vocab import TokenMetadata
 
+import torch
 from transformers import Trainer, TrainingArguments
 
 
@@ -51,6 +52,17 @@ class SFTConfig:
     eval_steps: int = 500
     save_steps: int = 1000
     save_total_limit: int = 3
+
+
+class RobustTrainer(Trainer):
+    """Trainer that skips batches with NaN/Inf loss instead of corrupting the model."""
+    def training_step(self, model, inputs, num_items_in_batch=None):
+        loss = super().training_step(model, inputs, num_items_in_batch)
+        if not torch.isfinite(loss):
+            print(f"Warning: non-finite loss {loss.item()}, skipping batch and zeroing gradients")
+            self.optimizer.zero_grad()
+            return torch.tensor(0.0, requires_grad=False, device=loss.device)
+        return loss
 
 
 def run_sft(config: SFTConfig) -> None:
@@ -140,7 +152,7 @@ def run_sft(config: SFTConfig) -> None:
         report_to="wandb",
     )
 
-    trainer = Trainer(
+    trainer = RobustTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
