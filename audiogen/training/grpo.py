@@ -1,0 +1,281 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable
+
+import torch
+import numpy as np
+
+from audiogen.training.sft import SFTConfig
+from audiogen.data.io import load_prompts
+from audiogen.model.setup import load_trained_model
+from audiogen.tokens.vocab import save_token_metadata
+from audiogen.inference.generate import generate_token_ids, decode_token_ids
+from audiogen.tokens.formatting import get_formatter
+
+
+@dataclass
+class GRPOConfig(SFTConfig):
+    # GRPO rollout
+    num_generations: int = 4       # completions per prompt per step
+    max_new_tokens: int = 1200     # max audio tokens to generate
+    temperature: float = 1.0
+    top_p: float = 0.95
+
+    # Reward
+    reward_type: str = "utmos"     # "utmos" | "clap" | "combined"
+    clap_model: str = "laion/clap-htsat-unfused"
+    min_audio_frames: int = 10     # completions shorter than this get reward -1
+
+    # GRPO loss
+    beta: float = 0.01             # KL penalty coefficient
+    epsilon: float = 0.2           # PPO-style clip ratio
+
+    # Training
+    grpo_steps: int = 1000
+    prompts_path: str = ""         # path to JSON list of prompts
+    save_steps: int = 100
+
+
+def _load_utmos():
+    try:
+        import utmos
+        predictor = utmos.Score(device="cuda" if torch.cuda.is_available() else "cpu")
+        return predictor
+    except ImportError:
+        raise ImportError("UTMOS not installed. Run: pip install utmos")
+
+
+def _load_clap(model_name: str):
+    try:
+        from transformers import ClapModel, ClapProcessor
+        model = ClapModel.from_pretrained(model_name)
+        processor = ClapProcessor.from_pretrained(model_name)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = model.to(device).eval()
+        return model, processor
+    except ImportError:
+        raise ImportError("transformers not installed or CLAP model unavailable")
+
+
+def compute_utmos_reward(waveforms: list[torch.Tensor | None], sample_rate: int, predictor) -> list[float]:
+    rewards = []
+    for wav in waveforms:
+        if wav is None:
+            rewards.append(-1.0)
+            continue
+        try:
+            # utmos expects (samples,) numpy array at 16kHz
+            audio = wav.squeeze().numpy()
+            if sample_rate != 16000:
+                import librosa
+                audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
+            score = predictor.score(audio, 16000)
+            # normalize to [-1, 1] range (UTMOS is 1-5 MOS scale)
+            reward = (score - 3.0) / 2.0
+            rewards.append(float(reward))
+        except Exception as e:
+            print(f"UTMOS scoring failed: {e}")
+            rewards.append(-1.0)
+    return rewards
+
+
+def compute_clap_reward(
+    waveforms: list[torch.Tensor | None],
+    prompts: list[str],
+    sample_rate: int,
+    clap_model,
+    clap_processor,
+) -> list[float]:
+    rewards = []
+    device = next(clap_model.parameters()).device
+    for wav, prompt in zip(waveforms, prompts):
+        if wav is None:
+            rewards.append(-1.0)
+            continue
+        try:
+            audio = wav.squeeze().numpy()
+            inputs = clap_processor(
+                text=[prompt],
+                audios=[audio],
+                return_tensors="pt",
+                sampling_rate=sample_rate,
+                padding=True,
+            )
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            with torch.no_grad():
+                outputs = clap_model(**inputs)
+            similarity = torch.nn.functional.cosine_similarity(
+                outputs.text_embeds, outputs.audio_embeds
+            ).item()
+            rewards.append(float(similarity))
+        except Exception as e:
+            print(f"CLAP scoring failed: {e}")
+            rewards.append(-1.0)
+    return rewards
+
+
+def grpo_loss(
+    log_probs: torch.Tensor,        # (G,) log probs of completion under current model
+    ref_log_probs: torch.Tensor,    # (G,) log probs under reference model
+    rewards: torch.Tensor,          # (G,) scalar rewards
+    beta: float = 0.01,
+    epsilon: float = 0.2,
+) -> torch.Tensor:
+    # Normalize rewards within group
+    rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+
+    # KL penalty: D_KL(pi || pi_ref) ≈ log_probs - ref_log_probs
+    kl = log_probs - ref_log_probs
+
+    # PPO-style clipped objective
+    ratio = torch.exp(log_probs - ref_log_probs)
+    clipped_ratio = torch.clamp(ratio, 1 - epsilon, 1 + epsilon)
+    policy_loss = -torch.min(ratio * rewards, clipped_ratio * rewards)
+
+    loss = (policy_loss + beta * kl).mean()
+    return loss
+
+
+def _completion_log_prob(model, tokenizer, input_ids: torch.Tensor, completion_ids: torch.Tensor, device: str) -> torch.Tensor:
+    full = torch.cat([input_ids, completion_ids.unsqueeze(0)], dim=1).to(device)
+    with torch.no_grad():
+        logits = model(full).logits  # (1, T, V)
+    # log probs for completion tokens only
+    log_probs = torch.nn.functional.log_softmax(logits[0, input_ids.shape[1]-1:-1], dim=-1)
+    token_log_probs = log_probs.gather(1, completion_ids.unsqueeze(1).to(device)).squeeze(1)
+    return token_log_probs.sum()
+
+
+def run_grpo(config: GRPOConfig) -> None:
+    output_dir = Path(config.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    print(f"Loading model from: {config.resume_from_checkpoint}")
+    model, tokenizer, meta = load_trained_model(config.resume_from_checkpoint)
+    model = model.to(device).train()
+    save_token_metadata(meta, output_dir / "audio_token_metadata.json")
+    tokenizer.save_pretrained(output_dir)
+
+    # Reference model (frozen copy for KL)
+    import copy
+    ref_model = copy.deepcopy(model).eval()
+    for p in ref_model.parameters():
+        p.requires_grad = False
+
+    # Load codec for decoding
+    from audiogen.codecs.moss import MOSSCodec
+    codec = MOSSCodec(num_codebooks=meta.num_codebooks, device=device)
+
+    formatter = get_formatter(meta.codec, meta.num_codebooks)
+
+    # Load reward model(s)
+    utmos_predictor = None
+    clap_model = clap_processor = None
+    if config.reward_type in ("utmos", "combined"):
+        print("Loading UTMOS...")
+        utmos_predictor = _load_utmos()
+    if config.reward_type in ("clap", "combined"):
+        print("Loading CLAP...")
+        clap_model, clap_processor = _load_clap(config.clap_model)
+
+    # Load prompts
+    prompts = load_prompts(config.prompts_path)
+    print(f"Loaded {len(prompts)} prompts")
+
+    optimizer = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=config.learning_rate,
+        weight_decay=config.weight_decay,
+    )
+
+    import random
+    rng = random.Random(42)
+
+    for step in range(config.grpo_steps):
+        prompt = rng.choice(prompts)
+
+        # Generate G completions
+        completions = []
+        waveforms = []
+        for _ in range(config.num_generations):
+            with torch.no_grad():
+                token_ids = generate_token_ids(
+                    model, tokenizer, prompt, meta,
+                    max_new_tokens=config.max_new_tokens,
+                    temperature=config.temperature,
+                    top_p=config.top_p,
+                    device=device,
+                )
+            completions.append(token_ids)
+
+            # Decode to audio
+            codec_output = decode_token_ids(token_ids, tokenizer, formatter, meta)
+            if codec_output is not None and codec_output.num_frames >= config.min_audio_frames:
+                wav = codec.decode(codec_output)
+                waveforms.append(wav)
+            else:
+                waveforms.append(None)
+
+        # Score with reward model
+        if config.reward_type == "utmos":
+            rewards_list = compute_utmos_reward(waveforms, codec.sample_rate, utmos_predictor)
+        elif config.reward_type == "clap":
+            rewards_list = compute_clap_reward(waveforms, [prompt] * len(waveforms), codec.sample_rate, clap_model, clap_processor)
+        else:  # combined
+            utmos_r = compute_utmos_reward(waveforms, codec.sample_rate, utmos_predictor)
+            clap_r = compute_clap_reward(waveforms, [prompt] * len(waveforms), codec.sample_rate, clap_model, clap_processor)
+            rewards_list = [0.5 * u + 0.5 * c for u, c in zip(utmos_r, clap_r)]
+
+        rewards = torch.tensor(rewards_list, dtype=torch.float32)
+        print(f"Step {step}: rewards={[f'{r:.3f}' for r in rewards_list]} mean={rewards.mean():.3f}")
+
+        # Build prefix input_ids (same for all completions)
+        from audiogen.tokens.formatting import get_formatter as _gf
+        _formatter = _gf(meta.codec, meta.num_codebooks)
+        messages = _formatter.format_chat_messages(prompt, output=None)
+        if tokenizer.chat_template is None:
+            from transformers import AutoTokenizer as _AT
+            tokenizer.chat_template = _AT.from_pretrained("Qwen/Qwen2.5-1.5B-Instruct").chat_template
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) + "<audio>"
+        prefix_ids = tokenizer.encode(text[:-len("<audio>")], add_special_tokens=False) + [meta.audio_start_token_id]
+        prefix_tensor = torch.tensor([prefix_ids], dtype=torch.long)
+
+        # Compute log probs under current and reference model
+        log_probs_list = []
+        ref_log_probs_list = []
+        for token_ids in completions:
+            if len(token_ids) == 0:
+                log_probs_list.append(torch.tensor(-100.0))
+                ref_log_probs_list.append(torch.tensor(-100.0))
+                continue
+            lp = _completion_log_prob(model, tokenizer, prefix_tensor, token_ids, device)
+            with torch.no_grad():
+                ref_lp = _completion_log_prob(ref_model, tokenizer, prefix_tensor, token_ids, device)
+            log_probs_list.append(lp)
+            ref_log_probs_list.append(ref_lp)
+
+        log_probs = torch.stack(log_probs_list)
+        ref_log_probs = torch.stack(ref_log_probs_list)
+
+        loss = grpo_loss(log_probs, ref_log_probs, rewards.to(device), beta=config.beta, epsilon=config.epsilon)
+
+        optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+        optimizer.step()
+
+        print(f"Step {step}: loss={loss.item():.4f} mean_reward={rewards.mean():.3f}")
+
+        if (step + 1) % config.save_steps == 0:
+            ckpt_dir = output_dir / f"checkpoint-{step+1}"
+            model.save_pretrained(str(ckpt_dir))
+            tokenizer.save_pretrained(str(ckpt_dir))
+            save_token_metadata(meta, ckpt_dir / "audio_token_metadata.json")
+            print(f"Saved checkpoint to {ckpt_dir}")
+
+    model.save_pretrained(str(output_dir))
+    print("GRPO training complete.")
