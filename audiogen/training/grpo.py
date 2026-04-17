@@ -205,7 +205,8 @@ def run_grpo(config: GRPOConfig) -> None:
     for step in range(config.grpo_steps):
         prompt = rng.choice(prompts)
 
-        # Generate G completions
+        # Generate G completions (eval mode for stable generation)
+        model.eval()
         completions = []
         waveforms = []
         for _ in range(config.num_generations):
@@ -218,6 +219,7 @@ def run_grpo(config: GRPOConfig) -> None:
                     device=device,
                 )
             completions.append(token_ids)
+        model.train()
 
             # Decode to audio
             codec_output = decode_token_ids(token_ids, tokenizer, formatter, meta)
@@ -269,12 +271,17 @@ def run_grpo(config: GRPOConfig) -> None:
 
         loss = grpo_loss(log_probs, ref_log_probs, rewards.to(device), beta=config.beta, epsilon=config.epsilon)
 
+        if not torch.isfinite(loss):
+            print(f"Step {step}: non-finite loss {loss.item()}, skipping update")
+            optimizer.zero_grad()
+            continue
+
         optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
         optimizer.step()
 
-        print(f"Step {step}: loss={loss.item():.4f} mean_reward={rewards.mean():.3f}")
+        print(f"Step {step}: loss={loss.item():.4f} mean_reward={rewards.mean():.3f} grad_norm={grad_norm:.3f}")
 
         if (step + 1) % config.save_steps == 0:
             ckpt_dir = output_dir / f"checkpoint-{step+1}"
