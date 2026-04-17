@@ -96,11 +96,15 @@ def compute_clap_reward(
             continue
         try:
             audio = wav.squeeze().numpy()
+            clap_sr = 48000
+            if sample_rate != clap_sr:
+                import librosa
+                audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=clap_sr)
             inputs = clap_processor(
                 text=[prompt],
                 audio=[audio],
                 return_tensors="pt",
-                sampling_rate=sample_rate,
+                sampling_rate=clap_sr,
                 padding=True,
             )
             inputs = {k: v.to(device) for k, v in inputs.items()}
@@ -138,9 +142,12 @@ def grpo_loss(
     return loss
 
 
-def _completion_log_prob(model, tokenizer, input_ids: torch.Tensor, completion_ids: torch.Tensor, device: str) -> torch.Tensor:
+def _completion_log_prob(model, tokenizer, input_ids: torch.Tensor, completion_ids: torch.Tensor, device: str, no_grad: bool = False) -> torch.Tensor:
     full = torch.cat([input_ids, completion_ids.unsqueeze(0)], dim=1).to(device)
-    with torch.no_grad():
+    if no_grad:
+        with torch.no_grad():
+            logits = model(full).logits
+    else:
         logits = model(full).logits  # (1, T, V)
     # log probs for completion tokens only
     log_probs = torch.nn.functional.log_softmax(logits[0, input_ids.shape[1]-1:-1], dim=-1)
@@ -252,9 +259,8 @@ def run_grpo(config: GRPOConfig) -> None:
                 log_probs_list.append(torch.tensor(-100.0))
                 ref_log_probs_list.append(torch.tensor(-100.0))
                 continue
-            lp = _completion_log_prob(model, tokenizer, prefix_tensor, token_ids, device)
-            with torch.no_grad():
-                ref_lp = _completion_log_prob(ref_model, tokenizer, prefix_tensor, token_ids, device)
+            lp = _completion_log_prob(model, tokenizer, prefix_tensor, token_ids, device, no_grad=False)
+            ref_lp = _completion_log_prob(ref_model, tokenizer, prefix_tensor, token_ids, device, no_grad=True)
             log_probs_list.append(lp)
             ref_log_probs_list.append(ref_lp)
 
