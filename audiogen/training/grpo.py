@@ -98,7 +98,7 @@ def compute_clap_reward(
             audio = wav.squeeze().numpy()
             inputs = clap_processor(
                 text=[prompt],
-                audios=[audio],
+                audio=[audio],
                 return_tensors="pt",
                 sampling_rate=sample_rate,
                 padding=True,
@@ -168,7 +168,7 @@ def run_grpo(config: GRPOConfig) -> None:
 
     # Load codec for decoding
     from audiogen.codecs.moss import MOSSCodec
-    codec = MOSSCodec(num_codebooks=meta.num_codebooks, device=device)
+    codec = MOSSCodec.load(device=device, num_codebooks=meta.num_codebooks)
 
     formatter = get_formatter(meta.codec, meta.num_codebooks)
 
@@ -242,7 +242,7 @@ def run_grpo(config: GRPOConfig) -> None:
             tokenizer.chat_template = _AT.from_pretrained("Qwen/Qwen2.5-1.5B-Instruct").chat_template
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) + "<audio>"
         prefix_ids = tokenizer.encode(text[:-len("<audio>")], add_special_tokens=False) + [meta.audio_start_token_id]
-        prefix_tensor = torch.tensor([prefix_ids], dtype=torch.long)
+        prefix_tensor = torch.tensor([prefix_ids], dtype=torch.long).to(device)
 
         # Compute log probs under current and reference model
         log_probs_list = []
