@@ -18,7 +18,7 @@ def main():
     parser.add_argument("--top_p", type=float, default=0.95)
 
     # Reward
-    parser.add_argument("--reward_type", default="utmos", choices=["utmos", "clap", "combined"])
+    parser.add_argument("--reward_type", default="squim", choices=["utmos", "squim", "clap", "combined"])
     parser.add_argument("--clap_model", default="laion/clap-htsat-unfused")
     parser.add_argument("--min_audio_frames", type=int, default=10)
 

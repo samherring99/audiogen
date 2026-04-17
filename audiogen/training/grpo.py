@@ -24,7 +24,7 @@ class GRPOConfig(SFTConfig):
     top_p: float = 0.95
 
     # Reward
-    reward_type: str = "utmos"     # "utmos" | "clap" | "combined"
+    reward_type: str = "squim"     # "utmos" | "squim" | "clap" | "combined"
     clap_model: str = "laion/clap-htsat-unfused"
     min_audio_frames: int = 10     # completions shorter than this get reward -1
 
@@ -45,6 +45,42 @@ def _load_utmos():
         return predictor
     except ImportError:
         raise ImportError("UTMOS not installed. Run: pip install utmos")
+
+
+def _load_squim():
+    import torchaudio
+    from torchaudio.pipelines import SQUIM_OBJECTIVE
+    model = SQUIM_OBJECTIVE.get_model()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = model.to(device).eval()
+    squim_sr = SQUIM_OBJECTIVE.sample_rate
+    return model, squim_sr
+
+
+def compute_squim_reward(waveforms: list[torch.Tensor | None], sample_rate: int, squim_model, squim_sr: int) -> list[float]:
+    device = next(squim_model.parameters()).device
+    rewards = []
+    for wav in waveforms:
+        if wav is None:
+            rewards.append(-1.0)
+            continue
+        try:
+            audio = wav.squeeze().unsqueeze(0)  # (1, samples)
+            if sample_rate != squim_sr:
+                import torchaudio
+                audio = torchaudio.functional.resample(audio, sample_rate, squim_sr)
+            audio = audio.to(device)
+            with torch.no_grad():
+                stoi, pesq, si_sdr = squim_model(audio)
+            # si_sdr is most discriminative for speech quality, normalize loosely
+            score = float(si_sdr.mean().item())
+            # clip to reasonable range and normalize to [-1, 1]
+            score = max(-20.0, min(20.0, score)) / 20.0
+            rewards.append(score)
+        except Exception as e:
+            print(f"SQUIM scoring failed: {e}")
+            rewards.append(-1.0)
+    return rewards
 
 
 def _load_clap(model_name: str):
@@ -182,10 +218,14 @@ def run_grpo(config: GRPOConfig) -> None:
 
     # Load reward model(s)
     utmos_predictor = None
+    squim_model = squim_sr = None
     clap_model = clap_processor = None
     if config.reward_type in ("utmos", "combined"):
         print("Loading UTMOS...")
         utmos_predictor = _load_utmos()
+    if config.reward_type == "squim":
+        print("Loading SQUIM...")
+        squim_model, squim_sr = _load_squim()
     if config.reward_type in ("clap", "combined"):
         print("Loading CLAP...")
         clap_model, clap_processor = _load_clap(config.clap_model)
@@ -233,6 +273,8 @@ def run_grpo(config: GRPOConfig) -> None:
         # Score with reward model
         if config.reward_type == "utmos":
             rewards_list = compute_utmos_reward(waveforms, codec.sample_rate, utmos_predictor)
+        elif config.reward_type == "squim":
+            rewards_list = compute_squim_reward(waveforms, codec.sample_rate, squim_model, squim_sr)
         elif config.reward_type == "clap":
             rewards_list = compute_clap_reward(waveforms, [prompt] * len(waveforms), codec.sample_rate, clap_model, clap_processor)
         else:  # combined
