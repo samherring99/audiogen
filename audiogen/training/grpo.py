@@ -163,7 +163,8 @@ def run_grpo(config: GRPOConfig) -> None:
 
     print(f"Loading model from: {config.resume_from_checkpoint}")
     model, tokenizer, meta = load_trained_model(config.resume_from_checkpoint)
-    model = model.to(device).train()
+    model = model.to(device=device, dtype=torch.bfloat16).train()
+    print(f"Model dtype: {next(model.parameters()).dtype}")
     save_token_metadata(meta, output_dir / "audio_token_metadata.json")
     tokenizer.save_pretrained(output_dir)
 
@@ -280,6 +281,13 @@ def run_grpo(config: GRPOConfig) -> None:
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
         optimizer.step()
+
+        # Check for NaN weights after update — if corrupted, reload from checkpoint
+        has_nan = any(not torch.isfinite(p).all() for p in model.parameters())
+        if has_nan:
+            print(f"Step {step}: NaN weights detected after optimizer step, skipping")
+            optimizer.zero_grad()
+            continue
 
         print(f"Step {step}: loss={loss.item():.4f} mean_reward={rewards.mean():.3f} grad_norm={grad_norm:.3f}")
 
