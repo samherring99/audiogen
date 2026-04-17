@@ -166,16 +166,10 @@ def grpo_loss(
     # Normalize rewards within group
     rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
 
-    # log ratio — clamp to prevent exp overflow
-    log_ratio = torch.clamp(log_probs - ref_log_probs.detach(), -10.0, 10.0)
-
-    # KL penalty
-    kl = log_ratio
-
-    # PPO-style clipped objective
-    ratio = torch.exp(log_ratio)
-    clipped_ratio = torch.clamp(ratio, 1 - epsilon, 1 + epsilon)
-    policy_loss = -torch.min(ratio * rewards, clipped_ratio * rewards)
+    # Direct policy gradient: maximize E[reward * log_prob] + KL penalty
+    # No PPO clipping — simpler and works better when current == ref at step 0
+    kl = torch.clamp(log_probs - ref_log_probs.detach(), -10.0, 10.0)
+    policy_loss = -(log_probs * rewards)
 
     loss = (policy_loss + beta * kl).mean()
     return loss
