@@ -166,11 +166,14 @@ def grpo_loss(
     # Normalize rewards within group
     rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
 
-    # KL penalty: D_KL(pi || pi_ref) ≈ log_probs - ref_log_probs
-    kl = log_probs - ref_log_probs
+    # log ratio — clamp to prevent exp overflow
+    log_ratio = torch.clamp(log_probs - ref_log_probs.detach(), -10.0, 10.0)
+
+    # KL penalty
+    kl = log_ratio
 
     # PPO-style clipped objective
-    ratio = torch.exp(log_probs - ref_log_probs)
+    ratio = torch.exp(log_ratio)
     clipped_ratio = torch.clamp(ratio, 1 - epsilon, 1 + epsilon)
     policy_loss = -torch.min(ratio * rewards, clipped_ratio * rewards)
 
@@ -188,7 +191,7 @@ def _completion_log_prob(model, tokenizer, input_ids: torch.Tensor, completion_i
     # log probs for completion tokens only
     log_probs = torch.nn.functional.log_softmax(logits[0, input_ids.shape[1]-1:-1], dim=-1)
     token_log_probs = log_probs.gather(1, completion_ids.unsqueeze(1).to(device)).squeeze(1)
-    return token_log_probs.sum()
+    return token_log_probs.mean()  # mean per token to avoid underflow on long sequences
 
 
 def run_grpo(config: GRPOConfig) -> None:
