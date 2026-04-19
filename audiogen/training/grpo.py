@@ -194,6 +194,12 @@ def run_grpo(config: GRPOConfig) -> None:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    try:
+        import wandb
+        wandb.init(project="audiogen-grpo", config=vars(config))
+    except Exception:
+        pass
+
     print(f"Loading model from: {config.resume_from_checkpoint}")
     model, tokenizer, meta = load_trained_model(config.resume_from_checkpoint)
     model = model.to(device=device, dtype=torch.bfloat16).train()
@@ -328,7 +334,14 @@ def run_grpo(config: GRPOConfig) -> None:
             optimizer.zero_grad()
             continue
 
-        print(f"Step {step}: loss={loss.item():.4f} mean_reward={rewards.mean():.3f} grad_norm={grad_norm:.3f}")
+        mean_reward = rewards.mean().item()
+        print(f"Step {step}: loss={loss.item():.4f} mean_reward={mean_reward:.3f} grad_norm={grad_norm:.3f}")
+        try:
+            import wandb
+            if wandb.run is not None:
+                wandb.log({"loss": loss.item(), "mean_reward": mean_reward, "grad_norm": grad_norm}, step=step)
+        except Exception:
+            pass
 
         if (step + 1) % config.save_steps == 0:
             ckpt_dir = output_dir / f"checkpoint-{step+1}"
