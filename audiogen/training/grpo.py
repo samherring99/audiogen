@@ -170,12 +170,17 @@ def compute_whisper_reward(
             rewards.append(-1.0)
             continue
         try:
-            audio = wav.squeeze().numpy()
+            audio = wav.squeeze()
+            if audio.dim() > 1:
+                audio = audio.mean(0)
+            audio = audio.float().numpy()
             # resample to 16kHz for whisper
             if sample_rate != 16000:
                 import librosa
                 audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
-            result = whisper_pipe(audio, generate_kwargs={"language": "english"})
+            audio = audio.astype(np.float32)
+            inputs = {"array": audio, "sampling_rate": 16000}
+            result = whisper_pipe(inputs, generate_kwargs={"language": "english"})
             transcription = _normalize_text(result["text"])
             reference = _normalize_text(prompt)
             wer = _wer(reference, transcription)
@@ -183,7 +188,8 @@ def compute_whisper_reward(
             reward = 1.0 - 2.0 * min(wer, 1.0)
             rewards.append(float(reward))
         except Exception as e:
-            print(f"Whisper scoring failed: {e}")
+            print(f"Whisper scoring failed: {e}", flush=True)
+            import traceback; traceback.print_exc()
             rewards.append(-1.0)
     return rewards
 
