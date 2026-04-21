@@ -12,6 +12,7 @@ def main():
     parser.add_argument("--output_dir", required=True)
 
     # Rollout
+    parser.add_argument("--num_prompts_per_step", type=int, default=4, help="Prompts sampled per step")
     parser.add_argument("--num_generations", type=int, default=4, help="Completions per prompt per step")
     parser.add_argument("--max_new_tokens", type=int, default=1200)
     parser.add_argument("--temperature", type=float, default=1.0)
@@ -41,6 +42,7 @@ def main():
         output_dir=args.output_dir,
         resume_from_checkpoint=args.resume_from_checkpoint,
         prompts_path=args.prompts_path,
+        num_prompts_per_step=args.num_prompts_per_step,
         num_generations=args.num_generations,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,

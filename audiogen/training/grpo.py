@@ -18,6 +18,7 @@ from audiogen.tokens.formatting import get_formatter
 @dataclass
 class GRPOConfig(SFTConfig):
     # GRPO rollout
+    num_prompts_per_step: int = 4  # prompts sampled per step
     num_generations: int = 4       # completions per prompt per step
     max_new_tokens: int = 1200     # max audio tokens to generate
     temperature: float = 1.0
@@ -246,67 +247,79 @@ def run_grpo(config: GRPOConfig) -> None:
     import random
     rng = random.Random(42)
 
-    for step in range(config.grpo_steps):
-        prompt = rng.choice(prompts)
-
-        # Generate G completions (eval mode for stable generation)
-        model.eval()
-        completions = []
-        waveforms = []
-        for _ in range(config.num_generations):
-            with torch.no_grad():
-                token_ids = generate_token_ids(
-                    model, tokenizer, prompt, meta,
-                    max_new_tokens=config.max_new_tokens,
-                    temperature=config.temperature,
-                    top_p=config.top_p,
-                    device=device,
-                )
-            completions.append(token_ids)
-        model.train()
-
-            # Decode to audio
-            codec_output = decode_token_ids(token_ids, tokenizer, formatter, meta)
-            if codec_output is not None and codec_output.num_frames >= config.min_audio_frames:
-                wav = codec.decode(codec_output)
-                waveforms.append(wav)
-            else:
-                waveforms.append(None)
-
-        # Score with reward model
-        if config.reward_type == "utmos":
-            rewards_list = compute_utmos_reward(waveforms, codec.sample_rate, utmos_predictor)
-        elif config.reward_type == "squim":
-            rewards_list = compute_squim_reward(waveforms, codec.sample_rate, squim_model, squim_sr)
-        elif config.reward_type == "clap":
-            rewards_list = compute_clap_reward(waveforms, [prompt] * len(waveforms), codec.sample_rate, clap_model, clap_processor)
-        else:  # combined
-            utmos_r = compute_utmos_reward(waveforms, codec.sample_rate, utmos_predictor)
-            clap_r = compute_clap_reward(waveforms, [prompt] * len(waveforms), codec.sample_rate, clap_model, clap_processor)
-            rewards_list = [0.5 * u + 0.5 * c for u, c in zip(utmos_r, clap_r)]
-
-        rewards = torch.tensor(rewards_list, dtype=torch.float32)
-        print(f"Step {step}: rewards={[f'{r:.3f}' for r in rewards_list]} mean={rewards.mean():.3f}")
-
-        # Build prefix input_ids (same for all completions)
-        from audiogen.tokens.formatting import get_formatter as _gf
-        _formatter = _gf(meta.codec, meta.num_codebooks)
-        messages = _formatter.format_chat_messages(prompt, output=None)
+    # Build prefix for a prompt
+    def build_prefix_tensor(prompt):
+        messages = formatter.format_chat_messages(prompt, output=None)
         if tokenizer.chat_template is None:
             from transformers import AutoTokenizer as _AT
             tokenizer.chat_template = _AT.from_pretrained("Qwen/Qwen2.5-1.5B-Instruct").chat_template
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) + "<audio>"
         prefix_ids = tokenizer.encode(text[:-len("<audio>")], add_special_tokens=False) + [meta.audio_start_token_id]
-        prefix_tensor = torch.tensor([prefix_ids], dtype=torch.long).to(device)
+        return torch.tensor([prefix_ids], dtype=torch.long).to(device)
 
-        # Compute log probs under current and reference model
+    for step in range(config.grpo_steps):
+        # Sample num_prompts_per_step prompts, generate num_generations each
+        step_prompts = [rng.choice(prompts) for _ in range(config.num_prompts_per_step)]
+
+        model.eval()
+        all_completions = []   # list of (prompt, token_ids) pairs
+        all_waveforms = []
+        all_prompt_labels = []  # which prompt each completion belongs to
+
+        for prompt in step_prompts:
+            for _ in range(config.num_generations):
+                with torch.no_grad():
+                    token_ids = generate_token_ids(
+                        model, tokenizer, prompt, meta,
+                        max_new_tokens=config.max_new_tokens,
+                        temperature=config.temperature,
+                        top_p=config.top_p,
+                        device=device,
+                    )
+                all_completions.append((prompt, token_ids))
+                all_prompt_labels.append(prompt)
+
+                codec_output = decode_token_ids(token_ids, tokenizer, formatter, meta)
+                if codec_output is not None and codec_output.num_frames >= config.min_audio_frames:
+                    wav = codec.decode(codec_output)
+                    all_waveforms.append(wav)
+                else:
+                    all_waveforms.append(None)
+
+        model.train()
+
+        # Score all completions
+        if config.reward_type == "utmos":
+            rewards_list = compute_utmos_reward(all_waveforms, codec.sample_rate, utmos_predictor)
+        elif config.reward_type == "squim":
+            rewards_list = compute_squim_reward(all_waveforms, codec.sample_rate, squim_model, squim_sr)
+        elif config.reward_type == "clap":
+            rewards_list = compute_clap_reward(all_waveforms, all_prompt_labels, codec.sample_rate, clap_model, clap_processor)
+        else:  # combined
+            utmos_r = compute_utmos_reward(all_waveforms, codec.sample_rate, utmos_predictor)
+            clap_r = compute_clap_reward(all_waveforms, all_prompt_labels, codec.sample_rate, clap_model, clap_processor)
+            rewards_list = [0.5 * u + 0.5 * c for u, c in zip(utmos_r, clap_r)]
+
+        # Normalize rewards per-prompt group
+        rewards_tensor = torch.tensor(rewards_list, dtype=torch.float32)
+        normalized_rewards = torch.zeros_like(rewards_tensor)
+        for i, prompt in enumerate(step_prompts):
+            idxs = [j for j, p in enumerate(all_prompt_labels) if p == prompt]
+            group = rewards_tensor[idxs]
+            normalized_rewards[idxs] = (group - group.mean()) / (group.std() + 1e-8)
+
+        mean_reward = rewards_tensor.mean().item()
+        print(f"Step {step}: mean_reward={mean_reward:.3f} rewards={[f'{r:.3f}' for r in rewards_list]}")
+
+        # Compute log probs and loss per prompt group
         log_probs_list = []
         ref_log_probs_list = []
-        for token_ids in completions:
+        for prompt, token_ids in all_completions:
             if len(token_ids) == 0:
-                log_probs_list.append(torch.tensor(-100.0))
-                ref_log_probs_list.append(torch.tensor(-100.0))
+                log_probs_list.append(torch.tensor(-9.0, device=device))
+                ref_log_probs_list.append(torch.tensor(-9.0, device=device))
                 continue
+            prefix_tensor = build_prefix_tensor(prompt)
             lp = _completion_log_prob(model, tokenizer, prefix_tensor, token_ids, device, no_grad=False)
             ref_lp = _completion_log_prob(ref_model, tokenizer, prefix_tensor, token_ids, device, no_grad=True)
             log_probs_list.append(lp)
@@ -315,7 +328,7 @@ def run_grpo(config: GRPOConfig) -> None:
         log_probs = torch.stack(log_probs_list)
         ref_log_probs = torch.stack(ref_log_probs_list)
 
-        loss = grpo_loss(log_probs, ref_log_probs, rewards.to(device), beta=config.beta, epsilon=config.epsilon)
+        loss = grpo_loss(log_probs, ref_log_probs, normalized_rewards.to(device), beta=config.beta, epsilon=config.epsilon)
 
         if not torch.isfinite(loss):
             print(f"Step {step}: non-finite loss {loss.item()}, skipping update")
