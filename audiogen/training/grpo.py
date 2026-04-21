@@ -175,7 +175,7 @@ def compute_whisper_reward(
             if sample_rate != 16000:
                 import librosa
                 audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
-            result = whisper_pipe({"array": audio, "sampling_rate": 16000})
+            result = whisper_pipe(audio, generate_kwargs={"language": "english"})
             transcription = _normalize_text(result["text"])
             reference = _normalize_text(prompt)
             wer = _wer(reference, transcription)
