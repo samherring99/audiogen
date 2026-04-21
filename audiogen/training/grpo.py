@@ -120,10 +120,11 @@ def compute_utmos_reward(waveforms: list[torch.Tensor | None], sample_rate: int,
 
 
 def _load_whisper(model_name: str):
-    from transformers import pipeline
+    from transformers import WhisperProcessor, WhisperForConditionalGeneration
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    pipe = pipeline("automatic-speech-recognition", model=model_name, device=device)
-    return pipe
+    processor = WhisperProcessor.from_pretrained(model_name)
+    model = WhisperForConditionalGeneration.from_pretrained(model_name).to(device).eval()
+    return processor, model, device
 
 
 def _normalize_text(text: str) -> str:
@@ -162,8 +163,9 @@ def compute_whisper_reward(
     waveforms: list[torch.Tensor | None],
     prompts: list[str],
     sample_rate: int,
-    whisper_pipe,
+    whisper_tuple,
 ) -> list[float]:
+    processor, whisper_model, device = whisper_tuple
     rewards = []
     for wav, prompt in zip(waveforms, prompts):
         if wav is None:
@@ -173,23 +175,26 @@ def compute_whisper_reward(
             audio = wav.squeeze()
             if audio.dim() > 1:
                 audio = audio.mean(0)
-            audio = audio.float().numpy()
-            # resample to 16kHz for whisper
+            audio = audio.float().numpy().astype(np.float32)
             if sample_rate != 16000:
                 import librosa
                 audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
-            audio = audio.astype(np.float32)
-            inputs = {"array": audio, "sampling_rate": 16000}
-            result = whisper_pipe(inputs, generate_kwargs={"language": "english"})
-            transcription = _normalize_text(result["text"])
+            inputs = processor(audio, sampling_rate=16000, return_tensors="pt")
+            input_features = inputs.input_features.to(device)
+            with torch.no_grad():
+                predicted_ids = whisper_model.generate(
+                    input_features,
+                    language="en",
+                    task="transcribe",
+                )
+            transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+            transcription = _normalize_text(transcription)
             reference = _normalize_text(prompt)
             wer = _wer(reference, transcription)
-            # convert WER to reward: 0 WER = 1.0 reward, 1+ WER = -1.0 reward
             reward = 1.0 - 2.0 * min(wer, 1.0)
             rewards.append(float(reward))
         except Exception as e:
             print(f"Whisper scoring failed: {e}", flush=True)
-            import traceback; traceback.print_exc()
             rewards.append(-1.0)
     return rewards
 
@@ -312,7 +317,7 @@ def run_grpo(config: GRPOConfig) -> None:
         clap_model, clap_processor = _load_clap(config.clap_model)
     if config.reward_type in ("whisper", "combined"):
         print("Loading Whisper...")
-        whisper_pipe = _load_whisper(config.whisper_model)
+        whisper_pipe = _load_whisper(config.whisper_model)  # returns (processor, model, device)
 
     # Load prompts
     prompts = load_prompts(config.prompts_path)
