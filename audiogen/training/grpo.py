@@ -311,6 +311,7 @@ def run_grpo(config: GRPOConfig) -> None:
         mean_reward = rewards_tensor.mean().item()
         print(f"Step {step}: mean_reward={mean_reward:.3f} rewards={[f'{r:.3f}' for r in rewards_list]}")
 
+
         # Compute log probs and loss per prompt group
         log_probs_list = []
         ref_log_probs_list = []
@@ -347,7 +348,7 @@ def run_grpo(config: GRPOConfig) -> None:
             optimizer.zero_grad()
             continue
 
-        mean_reward = rewards.mean().item()
+        mean_reward = rewards_tensor.mean().item()
         print(f"Step {step}: loss={loss.item():.4f} mean_reward={mean_reward:.3f} grad_norm={grad_norm:.3f}")
         try:
             import wandb
