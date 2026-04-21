@@ -25,8 +25,9 @@ class GRPOConfig(SFTConfig):
     top_p: float = 0.95
 
     # Reward
-    reward_type: str = "squim"     # "utmos" | "squim" | "clap" | "combined"
+    reward_type: str = "whisper"   # "utmos" | "squim" | "clap" | "whisper" | "combined"
     clap_model: str = "laion/clap-htsat-unfused"
+    whisper_model: str = "openai/whisper-base"
     min_audio_frames: int = 10     # completions shorter than this get reward -1
 
     # GRPO loss
@@ -114,6 +115,75 @@ def compute_utmos_reward(waveforms: list[torch.Tensor | None], sample_rate: int,
             rewards.append(float(reward))
         except Exception as e:
             print(f"UTMOS scoring failed: {e}")
+            rewards.append(-1.0)
+    return rewards
+
+
+def _load_whisper(model_name: str):
+    from transformers import pipeline
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    pipe = pipeline("automatic-speech-recognition", model=model_name, device=device)
+    return pipe
+
+
+def _normalize_text(text: str) -> str:
+    import re
+    text = text.lower()
+    # strip common prompt prefixes
+    for prefix in ("generate speech audio: ", "generate audio: "):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+    text = re.sub(r"[^\w\s]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _wer(ref: str, hyp: str) -> float:
+    ref_words = ref.split()
+    hyp_words = hyp.split()
+    if len(ref_words) == 0:
+        return 1.0
+    # Simple WER via dynamic programming
+    d = [[0] * (len(hyp_words) + 1) for _ in range(len(ref_words) + 1)]
+    for i in range(len(ref_words) + 1):
+        d[i][0] = i
+    for j in range(len(hyp_words) + 1):
+        d[0][j] = j
+    for i in range(1, len(ref_words) + 1):
+        for j in range(1, len(hyp_words) + 1):
+            if ref_words[i-1] == hyp_words[j-1]:
+                d[i][j] = d[i-1][j-1]
+            else:
+                d[i][j] = 1 + min(d[i-1][j], d[i][j-1], d[i-1][j-1])
+    return d[len(ref_words)][len(hyp_words)] / len(ref_words)
+
+
+def compute_whisper_reward(
+    waveforms: list[torch.Tensor | None],
+    prompts: list[str],
+    sample_rate: int,
+    whisper_pipe,
+) -> list[float]:
+    rewards = []
+    for wav, prompt in zip(waveforms, prompts):
+        if wav is None:
+            rewards.append(-1.0)
+            continue
+        try:
+            audio = wav.squeeze().numpy()
+            # resample to 16kHz for whisper
+            if sample_rate != 16000:
+                import librosa
+                audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
+            result = whisper_pipe({"array": audio, "sampling_rate": 16000})
+            transcription = _normalize_text(result["text"])
+            reference = _normalize_text(prompt)
+            wer = _wer(reference, transcription)
+            # convert WER to reward: 0 WER = 1.0 reward, 1+ WER = -1.0 reward
+            reward = 1.0 - 2.0 * min(wer, 1.0)
+            rewards.append(float(reward))
+        except Exception as e:
+            print(f"Whisper scoring failed: {e}")
             rewards.append(-1.0)
     return rewards
 
@@ -224,6 +294,7 @@ def run_grpo(config: GRPOConfig) -> None:
     utmos_predictor = None
     squim_model = squim_sr = None
     clap_model = clap_processor = None
+    whisper_pipe = None
     if config.reward_type in ("utmos", "combined"):
         print("Loading UTMOS...")
         utmos_predictor = _load_utmos()
@@ -233,6 +304,9 @@ def run_grpo(config: GRPOConfig) -> None:
     if config.reward_type in ("clap", "combined"):
         print("Loading CLAP...")
         clap_model, clap_processor = _load_clap(config.clap_model)
+    if config.reward_type in ("whisper", "combined"):
+        print("Loading Whisper...")
+        whisper_pipe = _load_whisper(config.whisper_model)
 
     # Load prompts
     prompts = load_prompts(config.prompts_path)
@@ -295,10 +369,12 @@ def run_grpo(config: GRPOConfig) -> None:
             rewards_list = compute_squim_reward(all_waveforms, codec.sample_rate, squim_model, squim_sr)
         elif config.reward_type == "clap":
             rewards_list = compute_clap_reward(all_waveforms, all_prompt_labels, codec.sample_rate, clap_model, clap_processor)
-        else:  # combined
-            utmos_r = compute_utmos_reward(all_waveforms, codec.sample_rate, utmos_predictor)
-            clap_r = compute_clap_reward(all_waveforms, all_prompt_labels, codec.sample_rate, clap_model, clap_processor)
-            rewards_list = [0.5 * u + 0.5 * c for u, c in zip(utmos_r, clap_r)]
+        elif config.reward_type == "whisper":
+            rewards_list = compute_whisper_reward(all_waveforms, all_prompt_labels, codec.sample_rate, whisper_pipe)
+        else:  # combined: whisper + squim
+            whisper_r = compute_whisper_reward(all_waveforms, all_prompt_labels, codec.sample_rate, whisper_pipe)
+            squim_r = compute_squim_reward(all_waveforms, codec.sample_rate, squim_model, squim_sr)
+            rewards_list = [0.6 * w + 0.4 * s for w, s in zip(whisper_r, squim_r)]
 
         # Normalize rewards per-prompt group
         rewards_tensor = torch.tensor(rewards_list, dtype=torch.float32)
