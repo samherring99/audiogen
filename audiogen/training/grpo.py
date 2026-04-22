@@ -306,10 +306,10 @@ def run_grpo(config: GRPOConfig) -> None:
     squim_model = squim_sr = None
     clap_model = clap_processor = None
     whisper_pipe = None
-    if config.reward_type in ("utmos", "combined"):
+    if config.reward_type == "utmos":
         print("Loading UTMOS...")
         utmos_predictor = _load_utmos()
-    if config.reward_type == "squim":
+    if config.reward_type in ("squim", "combined"):
         print("Loading SQUIM...")
         squim_model, squim_sr = _load_squim()
     if config.reward_type in ("clap", "combined"):
