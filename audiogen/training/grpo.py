@@ -159,6 +159,20 @@ def _wer(ref: str, hyp: str) -> float:
     return d[len(ref_words)][len(hyp_words)] / len(ref_words)
 
 
+def tail_noise_penalty(wav: torch.Tensor, tail_fraction: float = 0.2) -> float:
+    """Penalize if the last tail_fraction of audio has high energy relative to the body."""
+    audio = wav.squeeze().float()
+    tail_start = int(len(audio) * (1 - tail_fraction))
+    if tail_start <= 0:
+        return 0.0
+    tail_rms = audio[tail_start:].pow(2).mean().sqrt().item()
+    body_rms = audio[:tail_start].pow(2).mean().sqrt().item()
+    if body_rms < 1e-6:
+        return 0.0
+    ratio = tail_rms / (body_rms + 1e-6)
+    return -0.5 * min(ratio, 1.0)
+
+
 def compute_whisper_reward(
     waveforms: list[torch.Tensor | None],
     prompts: list[str],
@@ -191,7 +205,9 @@ def compute_whisper_reward(
             transcription = _normalize_text(transcription)
             reference = _normalize_text(prompt)
             wer = _wer(reference, transcription)
-            reward = 1.0 - 2.0 * min(wer, 1.0)
+            wer_reward = 1.0 - 2.0 * min(wer, 1.0)
+            tail_pen = tail_noise_penalty(wav)
+            reward = 0.8 * wer_reward + 0.2 * tail_pen
             rewards.append(float(reward))
         except Exception as e:
             print(f"Whisper scoring failed: {e}", flush=True)
