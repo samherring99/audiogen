@@ -50,7 +50,7 @@ class SFTConfig:
     # Logging
     logging_steps: int = 50
     eval_steps: int = 500
-    save_steps: int = 1000
+    save_steps: int = 500
     save_total_limit: int = 3
 
 

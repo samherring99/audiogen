@@ -23,6 +23,7 @@ def main():
     parser.add_argument("--resume_from_checkpoint", default=None, help="Path to checkpoint to resume from")
     parser.add_argument("--unfreeze_all", action="store_true", help="Train all parameters, not just embeddings")
     parser.add_argument("--unfreeze_last_n_layers", type=int, default=0, help="Unfreeze last N transformer layers + embeddings")
+    parser.add_argument("--gradient_checkpointing", action="store_true", help="Enable gradient checkpointing for large models")
     args = parser.parse_args()
 
     config = SFTConfig(
@@ -44,6 +45,7 @@ def main():
         unfreeze_all=args.unfreeze_all,
         unfreeze_last_n_layers=args.unfreeze_last_n_layers,
         max_grad_norm=args.max_grad_norm,
+        gradient_checkpointing=args.gradient_checkpointing,
         **({'lr_scheduler_type': args.lr_scheduler} if args.lr_scheduler else {}),
     )
     run_sft(config)
