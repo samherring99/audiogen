@@ -14,6 +14,8 @@ def main():
     parser.add_argument("--max_new_tokens", type=int, default=1200)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top_p", type=float, default=0.95)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--raw_tokens", default=None, help="Raw token/diagnostic JSON (default: OUTPUT.tokens.json)")
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 
@@ -24,6 +26,9 @@ def main():
 
     codec = load_codec(meta.codec, num_codebooks=meta.num_codebooks, device=args.device)
 
+    from transformers import set_seed
+    set_seed(args.seed)
+    raw_path = args.raw_tokens or (args.output + ".tokens.json")
     waveform = generate_audio(
         model, tokenizer, codec, meta,
         prompt=args.prompt,
@@ -32,8 +37,10 @@ def main():
         temperature=args.temperature,
         top_p=args.top_p,
         device=args.device,
+        raw_token_path=raw_path,
     )
 
+    print(f"Raw tokens/diagnostics: {raw_path} (seed={args.seed})")
     if waveform is not None:
         print(f"Saved to {args.output}")
     else:

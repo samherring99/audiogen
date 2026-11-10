@@ -1,0 +1,58 @@
+# --- Environments ---
+.venv/
+venv/
+env/
+.audio-venv/
+.venv-*/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- Model weights & checkpoints ---
+/checkpoints/
+/checkpoints-*/
+/models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+
+# --- Datasets & encoded audio corpora (root-level only; audiogen/data/ is package code) ---
+/data/
+/data_*/
+/encoded_*.jsonl
+/prompts*.json
+
+# --- Experiment scratch (private research, not part of the published repo) ---
+experiments/
+
+# --- Generated audio & media ---
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+
+# --- Logs, tracking, caches ---
+/wandb/
+/runs/
+/logs/
+*.log
+/torchinductor_*/
+/tmp*zf6krdxwandb*/
+/tmp*wandb-artifacts/
+/.cache/
+
+# --- Local credentials & scraped extras ---
+*_cookies.txt
+.env
+.env.*
+*.key
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+.vscode/

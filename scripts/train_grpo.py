@@ -19,7 +19,7 @@ def main():
     parser.add_argument("--top_p", type=float, default=0.95)
 
     # Reward
-    parser.add_argument("--reward_type", default="whisper", choices=["utmos", "squim", "clap", "whisper", "combined"])
+    parser.add_argument("--reward_type", default="whisper", choices=["utmos", "squim", "clap", "whisper", "combined", "gender"])
     parser.add_argument("--clap_model", default="laion/clap-htsat-unfused")
     parser.add_argument("--whisper_model", default="openai/whisper-base")
     parser.add_argument("--min_audio_frames", type=int, default=10)

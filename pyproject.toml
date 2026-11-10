@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audiogen"
+version = "0.1.0"
+description = "Autoregressive audio generation by post-training a small LLM on discrete audio tokens"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "torchaudio",
+    "transformers",
+    "soundfile",
+    "numpy",
+    "matplotlib",
+    "tqdm",
+    "peft",
+]
+
+[project.optional-dependencies]
+snac = ["snac"]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["audiogen*"]

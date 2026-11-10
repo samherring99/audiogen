@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import torch
 import soundfile as sf
-import numpy as np
 
 from audiogen.codecs.base import CodecBase, CodecOutput
-from audiogen.tokens.formatting import TokenFormatter
+from audiogen.tokens.formatting import (
+    TokenFormatter, build_audio_prefix, prompt_policy_from_config, validate_audio_stream,
+)
 from audiogen.tokens.vocab import TokenMetadata
 
 
@@ -21,35 +23,29 @@ def generate_token_ids(
     top_p: float = 0.95,
     device: str = "cpu",
 ) -> torch.Tensor:
-    from audiogen.tokens.formatting import get_formatter
-
-    formatter = get_formatter(metadata.codec, metadata.num_codebooks)
-    messages = formatter.format_chat_messages(prompt, output=None)
-
-    # If the saved tokenizer lost its chat template (happens when add_special_tokens clears it),
-    # fall back to loading it from the original Qwen instruct model.
-    if tokenizer.chat_template is None:
+    config = getattr(model, "config", None)
+    prompt_format, template_kwargs = prompt_policy_from_config(config)
+    policy = getattr(config, "audiogen", None)
+    model_type = getattr(config, "model_type", None)
+    if (isinstance(model_type, str) and "nemotron" in model_type.lower() and
+            (not policy or "prompt_format" not in policy)):
+        raise ValueError("Nemotron requires an explicit audiogen prompt policy")
+    source = (policy.get("base_model") if policy is not None
+              else getattr(config, "_name_or_path", None))
+    known_legacy_qwen = (
+        prompt_format == "legacy" and model_type in ("qwen2", "qwen3") and
+        isinstance(source, str) and source.startswith("Qwen/Qwen")
+    )
+    # Legacy formatting alone is not evidence of Qwen identity. Both its model
+    # family and recorded source must match before historical template recovery.
+    if not getattr(tokenizer, "chat_template", None) and known_legacy_qwen:
         from transformers import AutoTokenizer as _AT
-        _base = _AT.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
-        tokenizer.chat_template = _base.chat_template
-        print("Warning: tokenizer.chat_template was None — loaded from Qwen/Qwen2.5-0.5B-Instruct")
-
-    # Apply chat template and add the opening <audio> tag to prime generation
-    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    text += "<audio>"
-
-    print(f"[debug] prompt text: {repr(text[:200])}")
-    # Use encode directly — some saved tokenizers fail with __call__ but encode works
-    prefix_text = text[:-len("<audio>")]
-    prefix_ids = tokenizer.encode(prefix_text, add_special_tokens=False)
-    print(f"[debug] prefix token count: {len(prefix_ids)}")
-    assert len(prefix_ids) > 0, f"Prefix tokenized to empty. Check tokenizer. Text: {repr(prefix_text[:100])}"
-    audio_start_id = metadata.audio_start_token_id
-    all_ids = prefix_ids + [audio_start_id]
+        tokenizer.chat_template = _AT.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct").chat_template
+        print("Warning: restored missing legacy Qwen chat template")
+    all_ids = build_audio_prefix(tokenizer, prompt, metadata, prompt_format, template_kwargs)
     input_ids = torch.tensor([all_ids], dtype=torch.long).to(device)
     attention_mask = torch.ones_like(input_ids)
     inputs = {"input_ids": input_ids, "attention_mask": attention_mask}
-    print(f"[debug] input_ids shape: {input_ids.shape}")
     input_len = input_ids.shape[1]
 
     with torch.no_grad():
@@ -71,15 +67,22 @@ def decode_token_ids(
     tokenizer,
     formatter: TokenFormatter,
     metadata: TokenMetadata,
+    strict: bool = False,
 ) -> CodecOutput | None:
-    text = tokenizer.decode(token_ids, skip_special_tokens=False)
-    print(f"[debug] generated text ({len(token_ids)} tokens): {repr(text[:300])}")
-    try:
-        flat_tokens, num_frames = formatter.string_to_flat_tokens(text)
-    except Exception as e:
-        print(f"Warning: token parsing failed: {e}")
-        return None
-    print(f"[debug] parsed {len(flat_tokens)} flat tokens, {num_frames} frames")
+    if strict:
+        stream = validate_audio_stream(token_ids, metadata)
+        if not stream["valid"]:
+            raise ValueError(f"Invalid audio stream: {stream['errors']}")
+        flat_tokens, num_frames = stream["flat_tokens"], stream["num_frames"]
+    else:
+        # Compatibility path: old MOSS parsing ignores codebook order and
+        # truncates partial frames. Never use this to certify native output.
+        text = tokenizer.decode(token_ids, skip_special_tokens=False)
+        try:
+            flat_tokens, num_frames = formatter.string_to_flat_tokens(text)
+        except Exception as e:
+            print(f"Warning: token parsing failed: {e}")
+            return None
     if num_frames == 0:
         print("Warning: no audio tokens found in generated output — model may need more training")
         return None
@@ -107,6 +110,8 @@ def generate_audio(
     temperature: float = 1.0,
     top_p: float = 0.95,
     device: str = "cpu",
+    raw_token_path: str | Path | None = None,
+    diagnostics: dict | None = None,
 ) -> torch.Tensor | None:
     from audiogen.tokens.formatting import get_formatter
 
@@ -120,7 +125,28 @@ def generate_audio(
         device=device,
     )
 
-    codec_output = decode_token_ids(token_ids, tokenizer, formatter, metadata)
+    prompt_format, template_kwargs = prompt_policy_from_config(getattr(model, "config", None))
+    stream = validate_audio_stream(token_ids, metadata, max_new_tokens=max_new_tokens)
+    report = {
+        "prompt": prompt, "prompt_format": prompt_format,
+        "chat_template_kwargs": template_kwargs,
+        "raw_token_ids": token_ids.detach().cpu().tolist(), "stream": stream,
+        "max_new_tokens": max_new_tokens, "temperature": temperature, "top_p": top_p,
+        "decode_policy": "strict" if prompt_format == "speech_v1" else "legacy",
+    }
+    if diagnostics is not None:
+        diagnostics.update(report)
+    # Persist before parsing/codec decode so unsuccessful generations remain auditable.
+    if raw_token_path is not None:
+        raw_token_path = Path(raw_token_path)
+        raw_token_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_token_path.write_text(json.dumps(report, indent=2) + "\n")
+    if prompt_format == "speech_v1" and not stream["valid"]:
+        print(f"Warning: invalid native audio stream: {stream['errors']}")
+        return None
+    codec_output = decode_token_ids(
+        token_ids, tokenizer, formatter, metadata, strict=prompt_format == "speech_v1"
+    )
     if codec_output is None:
         return None
 

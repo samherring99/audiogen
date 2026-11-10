@@ -18,6 +18,8 @@ def main():
     parser.add_argument("--lora_base", default=None)
     parser.add_argument("--max_new_tokens", type=int, default=1200)
     parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--top_p", type=float, default=0.95)
+    parser.add_argument("--seed", type=int, default=42, help="Each sample uses seed + index")
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
@@ -38,16 +40,30 @@ def main():
 
     results = []
     for i, prompt in enumerate(tqdm(prompts, desc="Generating")):
+        from transformers import set_seed
+        sample_seed = args.seed + i
+        set_seed(sample_seed)
         out_path = output_dir / f"sample_{i:04d}.wav"
+        raw_path = output_dir / f"sample_{i:04d}.tokens.json"
+        diagnostics = {}
         waveform = generate_audio(
             model, tokenizer, codec, meta,
             prompt=prompt,
             output_path=out_path,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
+            top_p=args.top_p,
             device=args.device,
+            raw_token_path=raw_path,
+            diagnostics=diagnostics,
         )
-        results.append({"prompt": prompt, "output": str(out_path), "success": waveform is not None})
+        results.append({
+            "prompt": prompt, "output": str(out_path), "success": waveform is not None,
+            "seed": sample_seed, "top_p": args.top_p, "temperature": args.temperature,
+            "max_new_tokens": args.max_new_tokens, "raw_token_path": str(raw_path),
+            "prompt_format": diagnostics.get("prompt_format", "legacy"),
+            "stream": diagnostics.get("stream"),
+        })
 
     with open(output_dir / "results.json", "w") as f:
         json.dump(results, f, indent=2)
