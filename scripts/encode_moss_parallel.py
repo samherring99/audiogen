@@ -2,8 +2,8 @@
 Parallel MOSS encoding — one process per tar file.
 Usage:
   python scripts/encode_moss_parallel.py \
-    --tar_dir /home/shared/omnimodel/common_voice_1 \
-    --output /home/nightwing/Projects/audiogen/data/cv17_en_moss_1m.jsonl \
+    --tar_dir /path/to/common_voice_tars \
+    --output data/cv17_en_moss_1m.jsonl \
     --language en \
     --max_samples 1000000 \
     --workers 4 \

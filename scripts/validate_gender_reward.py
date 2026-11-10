@@ -8,6 +8,7 @@ synthetic prompts claiming matching vs mismatching tags).
 """
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import sys
@@ -23,9 +24,10 @@ from audiogen.training.grpo import (
     compute_gender_reward,
 )
 
-TAR_DIR = Path("/home/shared/omnimodel/common_voice_17")
-METADATA = Path("data/cv17_metadata.jsonl")
 N_PER_CASE = 6
+
+TAR_DIR: Path
+METADATA: Path
 
 
 def collect_clips(target_gender: str, n: int) -> list[tuple[torch.Tensor, str]]:
@@ -61,6 +63,14 @@ def collect_clips(target_gender: str, n: int) -> list[tuple[torch.Tensor, str]]:
 
 
 def main() -> None:
+    global TAR_DIR, METADATA
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tar_dir", required=True, help="Directory containing CV17 tar shards")
+    parser.add_argument("--metadata", required=True, help="CV17 metadata JSONL sidecar")
+    args = parser.parse_args()
+    TAR_DIR = Path(args.tar_dir)
+    METADATA = Path(args.metadata)
+
     female = collect_clips("female", N_PER_CASE)
     male = collect_clips("male", N_PER_CASE)
     print(f"clips: female={len(female)} male={len(male)}", flush=True)

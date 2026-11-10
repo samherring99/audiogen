@@ -22,12 +22,12 @@ MODEL = "alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech"
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tar_dir", default="/home/shared/omnimodel/common_voice_17")
-    parser.add_argument("--metadata", default="data/cv17_metadata.jsonl")
+    parser.add_argument("--tar_dir", required=True)
+    parser.add_argument("--metadata", required=True)
     parser.add_argument("--per_class", type=int, default=250)
     parser.add_argument("--num_tars", type=int, default=4)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--output", default="experiments/7b_sft_2026-07-31/gender_classifier_validation.json")
+    parser.add_argument("--output", default="gender_classifier_validation.json")
     args = parser.parse_args()
 
     # Collect labeled source_paths from the first N tars

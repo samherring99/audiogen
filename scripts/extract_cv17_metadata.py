@@ -19,8 +19,8 @@ from audiogen.data.metadata_tags import normalize_accent, normalize_age, normali
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tar_dir", default="/home/shared/omnimodel/common_voice_17")
-    parser.add_argument("--output", default="data/cv17_metadata.jsonl")
+    parser.add_argument("--tar_dir", required=True)
+    parser.add_argument("--output", default="cv17_metadata.jsonl")
     args = parser.parse_args()
 
     tar_files = sorted(Path(args.tar_dir).glob("*.tar"))

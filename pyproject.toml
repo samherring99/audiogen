@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 snac = ["snac"]
+scripts = ["librosa"]
 test = ["pytest"]
 
 [tool.setuptools.packages.find]

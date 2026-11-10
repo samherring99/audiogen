@@ -5,6 +5,7 @@ Uses real generated wavs with known human judgments + synthetic silence.
 PASS requires: good samples > bad sample > silence, and digit-prompt scoring
 works (9:45 canonicalization).
 """
+import argparse
 import sys
 
 import torch
@@ -17,29 +18,36 @@ from audiogen.training.grpo import (
     tail_noise_penalty,
 )
 
-CASES = [
-    # (wav path or "SILENCE"/"NOISE", prompt, human label)
-    ("experiments/7b_sft_2026-07-31/audio/numbers_step1114/sample_0004.wav",
-     "Generate speech audio: She finished 3rd in the race.", "good (user-approved)"),
-    ("experiments/7b_sft_2026-07-31/audio/numbers_step1114/sample_0008.wav",
-     "Generate speech audio: The train leaves from platform 7.", "good (user-approved)"),
-    ("experiments/7b_sft_2026-07-31/audio/numbers_step1114/sample_0002.wav",
-     "Generate speech audio: The meeting begins at 9:45.", "good at 1114 (digit-canon test)"),
-    ("experiments/7b_sft_2026-07-31/audio/numbers_step400/sample_0000.wav",
-     "Generate speech audio: I have 9 red apples.", "BAD (user: not good, low rms)"),
-    ("SILENCE",
-     "Generate speech audio: Hello there, how are you today?", "synthetic silence"),
-    ("NOISE",
-     "Generate speech audio: Hello there, how are you today?", "synthetic noise"),
-    ("MISMATCH:experiments/7b_sft_2026-07-31/audio/numbers_step1114/sample_0008.wav",
-     "Generate speech audio: The weather in Paris is lovely this evening.", "wrong-text control"),
+# Reference wav paths are supplied on the command line; PASS requires the reward to
+# rank the known-good samples above the known-bad one, silence, noise, and a
+# wrong-text control, with nontrivial spread.
+GOOD_PROMPTS = [
+    ("She finished 3rd in the race.", "good"),
+    ("The train leaves from platform 7.", "good"),
+    ("The meeting begins at 9:45.", "good (digit-canon test)"),
 ]
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--good_wavs", nargs=3, required=True,
+                        help="Three known-good wavs, in the order of GOOD_PROMPTS")
+    parser.add_argument("--bad_wav", required=True, help="One known-bad wav")
+    args = parser.parse_args()
+
+    cases = [
+        (src, f"Generate speech audio: {prompt}", label)
+        for src, (prompt, label) in zip(args.good_wavs, GOOD_PROMPTS)
+    ]
+    cases.append((args.bad_wav, "Generate speech audio: I have 9 red apples.", "BAD"))
+    cases.append(("SILENCE", "Generate speech audio: Hello there, how are you today?", "synthetic silence"))
+    cases.append(("NOISE", "Generate speech audio: Hello there, how are you today?", "synthetic noise"))
+    cases.append(("MISMATCH:" + args.good_wavs[1],
+                  "Generate speech audio: The weather in Paris is lovely this evening.", "wrong-text control"))
+
     whisper = _load_whisper("openai/whisper-base")
     waveforms, prompts, labels = [], [], []
-    for src, prompt, label in CASES:
+    for src, prompt, label in cases:
         if src == "SILENCE":
             wav = torch.zeros(1, 24000 * 4)
         elif src == "NOISE":
